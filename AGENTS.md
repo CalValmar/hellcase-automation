@@ -1,10 +1,11 @@
 # AGENTS.md
 
-- This repo is a single Python script that calls Hellcase's live API. There is no build, test, lint, or CI setup — "verification" means running the script against the real service.
-- The script opens `config.json` via a relative path, so run it from the repo root: `python3 daily_reward.py`. Python 3.6+ is required for f-strings.
-- `config.json` holds live credentials and is gitignored, but it used to be tracked — it was removed from the index. Never `git add` it; `config.example.json` is the tracked placeholder to copy from.
-- The script sends `XSRF-TOKEN` and `hellcase_session` cookies to `api.hellcase.com`. `hellcase_session` expires on session close or ~30 days; refresh both from browser cookies when calls start failing. Token-extraction steps are in README.md.
-- Running the script has real side effects on the configured account (opening the Newbie case via `https://api.hellcase.com/open/newbie`). Don't execute it as a casual test without user approval; there is no dry-run mode.
-- `daily_reward.py` prints only `status`, `casename`, `case_is_opened` and `claim_available`, not `response.text`: the Newbie response contains `auth_code` and a Steam trade link, so raw logging leaks account data. `need_refill` is deliberately omitted (the case is free). Non-JSON responses fall back to the HTTP status code.
-- `systemd/` holds user unit templates: `daily-reward.service` (oneshot, waits for network, retries failures, 60s timeout) and `daily-reward.timer` (`OnCalendar=daily`, `Persistent=true`, `RandomizedDelaySec=2h`). Install them in `~/.config/systemd/user/`; `loginctl enable-linger $USER` is required for them to run while logged out.
-- The script uses a 30s HTTP timeout. Don't start the timer as a setup test — the first run opens the real case. README has the exact install commands.
+- This repo is a single Python script that calls Hellcase's live API for one or several accounts. There is no build, test, lint, or CI setup — "verification" means running the script against the real service.
+- Run it from the repo root: `python3 daily_reward.py`. Python 3.6+ is required for f-strings.
+- `accounts.json` holds each account's `xsrf` / `session`, `secrets.json` holds the optional Discord webhook URL, and `history.json` stores drops. All are gitignored; `accounts.example.json` and `secrets.example.json` are the tracked templates. `config.json` is the old single-account file and is no longer read.
+- Each account gets its own `requests.session()` with its cookies. `hellcase_session` expires on logout or ~30 days; edit `accounts.json` locally when calls start failing.
+- `GET https://api.hellcase.com/open/newbie` really opens the case. Don't execute the script or start the timer as a test: every run opens the case for every configured account.
+- The script prints nothing. It appends `{date, account, user_id, case, weapon, price}` to `history.json` and posts a Discord message only when a webhook is configured. Raw responses are never logged: they contain `auth_code` and a Steam trade link.
+- `extract_drop()` matches drops in `top_items` filtered by the response's `user.id`. It carries a `shortcut:` comment because the real drop field has not been confirmed yet.
+- `systemd/` holds user unit templates: `daily-reward.service` (oneshot, waits for network, retries failures, 10min timeout) and `daily-reward.timer` (`OnCalendar=daily`, `Persistent=true`, `RandomizedDelaySec=2h`). Install them in `~/.config/systemd/user/`; `loginctl enable-linger $USER` is required to run while logged out.
+- The HTTP call has a 30s timeout, accounts are separated by a small random delay, and webhook failures are ignored.

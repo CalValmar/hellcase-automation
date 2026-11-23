@@ -11,6 +11,6 @@ ExecStart=/usr/bin/python3 %h/hellcase-automation/daily_reward.py
 Restart=on-failure
 RestartSec=1min
 StartLimitBurst=3
-TimeoutStartSec=60
+TimeoutStartSec=10min
 SyslogIdentifier=hellcase-daily
 Environment=PYTHONUNBUFFERED=1
