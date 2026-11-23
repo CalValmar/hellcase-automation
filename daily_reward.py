@@ -16,6 +16,6 @@ url = "https://api.hellcase.com/open/newbie"
 response = session.get(url, timeout=30)
 try:
     data = response.json()
-    print(data.get("status"), data.get("casename"), data.get("case_is_opened"), data.get("need_refill"))
+    print(data.get("status"), data.get("casename"), data.get("case_is_opened"), data.get("claim_available"))
 except ValueError:
     print(response.status_code)
