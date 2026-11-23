@@ -88,6 +88,22 @@ class DailyRewardTest(unittest.TestCase):
         self.assertEqual(history, [])
         self.assertIn("ouverture échouée", posts[0])
 
+    def test_failed_call_names_configured_user(self):
+        account = {"username": "Alice", "xsrf": "x", "session": "s"}
+        session = mock.Mock()
+        session.get.side_effect = d.requests.RequestException("down")
+        posts = []
+        with mock.patch.object(d.requests, "session", return_value=session), \
+             mock.patch.object(d.requests, "post",
+                               side_effect=lambda url, json=None, timeout=None: posts.append(json["content"])), \
+             mock.patch.object(d, "load_json", side_effect=lambda path, default: (
+                 {"discord_webhook_url": "https://example.invalid/hook", "accounts": [account]}
+                 if path == "config.json" else default)):
+            d.main()
+        self.assertEqual(len(posts), 1)
+        self.assertIn("Alice", posts[0])
+        self.assertIn("appel échoué", posts[0])
+
     def test_history_is_saved_after_each_account(self):
         account = {"username": "", "xsrf": "x", "session": "s"}
         with mock.patch.object(d.requests, "session",

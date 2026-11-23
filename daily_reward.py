@@ -53,7 +53,8 @@ def main():
             response = session.get(API_URL, timeout=30)
             data = response.json()
         except (requests.RequestException, ValueError):
-            notify(webhook, f"Compte #{index}: appel échoué")
+            name = account.get("username") or f"Compte #{index}"
+            notify(webhook, f"{name}: appel échoué — vérifie le token")
             continue
 
         user = data.get("user") or {}
