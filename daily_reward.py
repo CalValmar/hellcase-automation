@@ -13,7 +13,7 @@ cookies = {
 session.cookies.update(cookies)
 
 url = "https://api.hellcase.com/open/newbie"
-response = session.get(url)
+response = session.get(url, timeout=30)
 try:
     data = response.json()
     print(data.get("status"), data.get("casename"), data.get("case_is_opened"), data.get("need_refill"))

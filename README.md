@@ -21,6 +21,18 @@ To obtain tokens needed in config.json you should:
 - copy values from browser into config.json file
 Some values need to be replaced every so often.
 
-# usage
-My preffered way of using the script is to set up crohntab job every 1450 mins (24h + 10min).
-You can use raspberrypi or anything else that supports python, personally i'm using ASUS RT-N18U with Advanced Tomato + USB Stick containing files.
+# usage on a server (systemd user timer)
+Assuming the repo is at `~/hellcase-automation`:
+
+```bash
+mkdir -p ~/.config/systemd/user
+cp systemd/daily-reward.* ~/.config/systemd/user/
+chmod 600 config.json
+loginctl enable-linger "$USER"
+systemctl --user daemon-reload
+systemctl --user enable daily-reward.timer
+```
+
+Start the timer with `systemctl --user start daily-reward.timer` when you are ready — the first run really opens the case. Check it with `systemctl --user list-timers --all` and `journalctl --user -u daily-reward.service -f`.
+
+The timer runs daily and `Persistent=true` catches up a missed run after a reboot. When the session token expires, edit `config.json` locally; no code change is needed.

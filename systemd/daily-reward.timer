@@ -1,0 +1,10 @@
+[Unit]
+Description=Daily Hellcase Newbie case
+
+[Timer]
+OnCalendar=daily
+Persistent=true
+Unit=daily-reward.service
+
+[Install]
+WantedBy=timers.target

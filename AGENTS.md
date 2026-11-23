@@ -6,4 +6,5 @@
 - The script sends `XSRF-TOKEN` and `hellcase_session` cookies to `api.hellcase.com`. `hellcase_session` expires on session close or ~30 days; refresh both from browser cookies when calls start failing. Token-extraction steps are in README.md.
 - Running the script has real side effects on the configured account (opening the Newbie case via `https://api.hellcase.com/open/newbie`). Don't execute it as a casual test without user approval; there is no dry-run mode.
 - `daily_reward.py` prints only selected status fields, not `response.text`: the Newbie response contains `auth_code` and a Steam trade link, so raw logging leaks account data. Non-JSON responses fall back to the HTTP status code.
-- Scheduling is external (README suggests cron ~every 1450 minutes); there is no scheduler code in the repo.
+- `systemd/` holds user unit templates: `daily-reward.service` (oneshot, waits for network, retries failures, 60s timeout) and `daily-reward.timer` (`OnCalendar=daily`, `Persistent=true`). Install them in `~/.config/systemd/user/`; `loginctl enable-linger $USER` is required for them to run while logged out.
+- The script uses a 30s HTTP timeout. Don't start the timer as a setup test — the first run opens the real case. README has the exact install commands.
