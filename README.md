@@ -1,5 +1,5 @@
 # hellcase-automation
-Collection of python scripts that automate the Hellcase Newbie case and the free giveaway.
+Python script that opens the Hellcase Newbie case daily.
 
 # requirements
 - requests library
@@ -7,7 +7,7 @@ Collection of python scripts that automate the Hellcase Newbie case and the free
 - account created on hellcase
 
 # editing config files
-Copy `config.example.json` to `config.json` before using any of these scripts, then edit `config.json`. It is gitignored; never commit it.
+Copy `config.example.json` to `config.json` before using the script, then edit `config.json`. It is gitignored; never commit it.
 - "xsrf" is a token that is obtained from XSRF-TOKEN cookie from your browser, it doesn't need to be replaced every so often
 - "session" is a session token that can be obtained from hellcase_session cookie, it must be replaced every session closage or 30 days
 
@@ -21,6 +21,6 @@ To obtain tokens needed in config.json you should:
 - copy values from browser into config.json file
 Some values need to be replaced every so often.
 
-# usage of scripts
-My preffered way of using these scripts is to set up crohntab job every 1450 mins (24h + 10min).
+# usage
+My preffered way of using the script is to set up crohntab job every 1450 mins (24h + 10min).
 You can use raspberrypi or anything else that supports python, personally i'm using ASUS RT-N18U with Advanced Tomato + USB Stick containing files.
