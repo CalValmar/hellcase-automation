@@ -9,11 +9,11 @@ Python script that opens the Hellcase Newbie case daily for one or several accou
 # setup
 Copy `config.example.json` to `config.json`, then fill two things:
 - `discord_webhook_url`: leave empty to disable notifications.
-- `accounts`: one `{xsrf, session}` object per account. There is no `name` field: the account label is taken from the Hellcase nickname returned by the API.
+- `accounts`: one `{username, xsrf, session}` object per account. `username` is your own label, shown in Discord and history. If it is set and differs from the nickname returned by the API, a Discord warning is sent — this catches tokens filed under the wrong name. Leave it empty to fall back to the API nickname.
 
 `config.json` is gitignored; never commit it. Run `chmod 600 config.json`.
 
-To add a friend's account, append another `{xsrf, session}` object to `accounts`.
+To add a friend's account, append another `{username, xsrf, session}` object to `accounts`.
 
 # obtaining tokens from cookies
 To obtain the tokens for an account:

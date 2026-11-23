@@ -56,7 +56,11 @@ def main():
             continue
 
         user = data.get("user") or {}
-        label = user.get("nickname") or f"compte #{index}"
+        nickname = user.get("nickname")
+        configured = account.get("username")
+        label = configured or nickname or f"compte #{index}"
+        if configured and nickname and configured != nickname:
+            notify(webhook, f"{label}: pseudo configuré « {configured} » ≠ pseudo Hellcase « {nickname} » — vérifie les tokens")
         user_id = user.get("id")
         weapon, price = extract_drop(data, user_id)
         history.append({

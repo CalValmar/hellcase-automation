@@ -2,6 +2,7 @@
   "discord_webhook_url": "",
   "accounts": [
     {
+      "username": "PSEUDO Hellcase",
       "xsrf": "PLACE YOUR XSRF TOKEN HERE",
       "session": "PLACE YOUR SESSION TOKEN HERE, 40 CHARACTERS"
     }
