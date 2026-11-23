@@ -1,9 +1,9 @@
 # hellcase-automation
-Collection of python scripts that help automate obtaining daily rewards.
+Collection of python scripts that automate the Hellcase Newbie case and the free giveaway.
 
 # requirements
 - requests library
-- python2+
+- python3.6+ (f-strings)
 - account created on hellcase
 
 # editing config files

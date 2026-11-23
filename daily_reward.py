@@ -12,6 +12,10 @@ cookies = {
 
 session.cookies.update(cookies)
 
-url = "https://api.hellcase.com/dailyfree/buy"
+url = "https://api.hellcase.com/open/newbie"
 response = session.get(url)
-print(response.text)
+try:
+    data = response.json()
+    print(data.get("status"), data.get("casename"), data.get("case_is_opened"), data.get("need_refill"))
+except ValueError:
+    print(response.status_code)
