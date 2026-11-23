@@ -7,7 +7,7 @@ Collection of python scripts that automate the Hellcase Newbie case and the free
 - account created on hellcase
 
 # editing config files
-Before using any of these scripts you must edit config.json file
+Copy `config.example.json` to `config.json` before using any of these scripts, then edit `config.json`. It is gitignored; never commit it.
 - "xsrf" is a token that is obtained from XSRF-TOKEN cookie from your browser, it doesn't need to be replaced every so often
 - "session" is a session token that can be obtained from hellcase_session cookie, it must be replaced every session closage or 30 days
 
