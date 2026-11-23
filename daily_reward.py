@@ -76,16 +76,16 @@ def main():
             "price": price,
         })
 
+        with open("history.json.tmp", "w") as f:
+            json.dump(history, f, indent=2)
+        os.replace("history.json.tmp", "history.json")
+
         message = f"{label}: {data.get('status')}"
         if weapon:
             message += f" — {weapon} ({price})"
         notify(webhook, message)
         if index < len(accounts):
             time.sleep(random.uniform(5, 20))
-
-    with open("history.json.tmp", "w") as f:
-        json.dump(history, f, indent=2)
-    os.replace("history.json.tmp", "history.json")
 
 
 def run_locked():

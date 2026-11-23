@@ -6,10 +6,17 @@ Python script that opens the Hellcase Newbie case daily for one or several accou
 - python3.6+ (f-strings)
 - at least one account on Hellcase
 
+# project layout
+- `daily_reward.py`: opens the cases, saves drops to `history.json` and notifies Discord. The systemd timer runs it.
+- `stats.py`: reads `history.json` and prints counts and total price per account. No API call, no writes.
+- `test_daily_reward.py`: offline tests with a fake API (`python3 -m unittest -v test_daily_reward`).
+- `config.example.json`: tracked template; copy it to the gitignored `config.json`.
+- `systemd/`: user unit templates to install in `~/.config/systemd/user/`.
+
 # setup
 Copy `config.example.json` to `config.json`, then fill two things:
 - `discord_webhook_url`: leave empty to disable notifications.
-- `accounts`: one `{username, xsrf, session}` object per account. `username` is your own label, shown in Discord and history. If it is set and differs from the nickname returned by the API, a Discord warning is sent — this catches tokens filed under the wrong name. Leave it empty to fall back to the API nickname.
+- `accounts`: one `{username, xsrf, session}` object per account. `username` is your own label, shown in Discord and history. If it is set and differs from the nickname returned by the API (exact match, case sensitive), a Discord warning is sent — this catches tokens filed under the wrong name. Leave it empty to fall back to the API nickname.
 
 `config.json` and `history.json` are gitignored; never commit them. Run `chmod 600 config.json history.json` so other users on the server cannot read the tokens.
 
@@ -43,4 +50,7 @@ The script prints nothing. It appends each successful open to `history.json` (gi
 
 A lock file (`daily-reward.lock`) makes a second run exit immediately if one is already running. A failed run is not retried automatically: a blind retry could open the same case twice. Run `python3 -m unittest -v test_daily_reward` for offline tests, and `python3 stats.py` to print the number of opens and the total price per account (no API call).
 
-The timer runs daily with a random delay of up to 2 hours, and `Persistent=true` catches up a missed run after a reboot. When a session token expires, edit `config.json` locally; no code change is needed.
+The timer runs daily with a random delay of up to 2 hours, and `Persistent=true` catches up a missed run after a reboot. When a session token expires, edit `config.json` locally; no code change is needed. If a run fails, fix the cause and relaunch it by hand with `python3 daily_reward.py` from the repo root; the lock file prevents an overlap with the timer.
+
+# known limitation
+`extract_drop()` still reads the drop from `top_items`. Until a real opening response is supplied as `capture.json`, `weapon` and `price` can be null, so `stats.py` shows `0.00`. The openings and the history rows themselves are correct.

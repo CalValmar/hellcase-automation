@@ -56,7 +56,8 @@ class DailyRewardTest(unittest.TestCase):
                                    {"discord_webhook_url": "https://example.invalid/hook", "accounts": [account]}
                                    if path == "config.json" else default)):
             d.main()
-        history = json.loads(pathlib.Path("history.json").read_text())
+        path = pathlib.Path("history.json")
+        history = json.loads(path.read_text()) if path.exists() else []
         return history, posts
 
     def test_success_records_drop_under_configured_username(self):
@@ -86,6 +87,21 @@ class DailyRewardTest(unittest.TestCase):
         history, posts = self.run_main(reply("Alice", case_is_opened=False), "Alice")
         self.assertEqual(history, [])
         self.assertIn("ouverture échouée", posts[0])
+
+    def test_history_is_saved_after_each_account(self):
+        account = {"username": "", "xsrf": "x", "session": "s"}
+        with mock.patch.object(d.requests, "session",
+                               side_effect=[FakeSession(reply("Alice")), RuntimeError("boom")]), \
+             mock.patch.object(d.requests, "post"), \
+             mock.patch.object(d.time, "sleep"), \
+             mock.patch.object(d, "load_json", side_effect=lambda path, default: (
+                 {"discord_webhook_url": "", "accounts": [account, account]}
+                 if path == "config.json" else default)):
+            with self.assertRaises(RuntimeError):
+                d.main()
+        history = json.loads(pathlib.Path("history.json").read_text())
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["account"], "Alice")
 
     def test_lock_skips_second_run(self):
         lock = open("daily-reward.lock", "a")
