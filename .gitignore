@@ -1,4 +1,5 @@
 config.json
+capture.json
 history.json*
 *.lock
 __pycache__/
