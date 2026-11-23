@@ -52,5 +52,7 @@ A lock file (`daily-reward.lock`) makes a second run exit immediately if one is 
 
 The timer runs daily with a random delay of up to 2 hours, and `Persistent=true` catches up a missed run after a reboot. When a session token expires, edit `config.json` locally; no code change is needed. If a run fails, fix the cause and relaunch it by hand with `python3 daily_reward.py` from the repo root; the lock file prevents an overlap with the timer.
 
-# known limitation
-`extract_drop()` still reads the drop from `top_items`. Until a real opening response is supplied as `capture.json`, `weapon` and `price` can be null, so `stats.py` shows `0.00`. The openings and the history rows themselves are correct.
+# known limitations
+A real response was captured in `capture.json` (local, gitignored). It has no drop for the current user: `top_items` lists the last six opens by other players, so `weapon` and `price` stay null and `stats.py` shows `0.00`. The drop, if any, must come from another endpoint called by the website after the click.
+
+There is no countdown field either. `last_open_date` matches the newest `top_items` entry, which belongs to another player, so history rows use the local run time instead. On the captured response `need_refill` was `0.06` with a `0.04` balance while `status` was `success`: the API alone does not prove that a free opening really happened.

@@ -3,6 +3,7 @@ import json
 import os
 import random
 import time
+from datetime import datetime
 
 import requests
 
@@ -18,7 +19,7 @@ def load_json(path, default):
 
 
 def extract_drop(data, user_id):
-    # shortcut: only matches drops listed in top_items for the current user, upgrade when the real drop field is known
+    # shortcut: /open/newbie has no drop field and top_items are other players, so this stays empty until the real endpoint is known
     for entry in data.get("top_items", []):
         if (entry.get("user") or {}).get("id") != user_id:
             continue
@@ -69,7 +70,7 @@ def main():
         user_id = user.get("id")
         weapon, price = extract_drop(data, user_id)
         history.append({
-            "date": data.get("last_open_date"),
+            "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "account": label,
             "user_id": user_id,
             "case": data.get("casename"),
@@ -84,6 +85,8 @@ def main():
         message = f"{label}: {data.get('status')}"
         if weapon:
             message += f" — {weapon} ({price})"
+        else:
+            message += " — gain non renseigné par l'API"
         notify(webhook, message)
         if index < len(accounts):
             time.sleep(random.uniform(5, 20))

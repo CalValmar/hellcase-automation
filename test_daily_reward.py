@@ -14,7 +14,7 @@ def reply(nickname, status="success", case_is_opened=True):
         "status": status,
         "case_is_opened": case_is_opened,
         "casename": "Newbie",
-        "last_open_date": "2026-11-23 12:00:00",
+        "last_open_date": "2000-01-01 00:00:00",
         "user": {"id": 7, "nickname": nickname},
         "top_items": [{
             "user": {"id": 7},
@@ -66,6 +66,19 @@ class DailyRewardTest(unittest.TestCase):
         self.assertEqual(history[0]["weapon"], "USP | Test")
         self.assertEqual(history[0]["price"], 9.5)
         self.assertEqual(len(posts), 1)
+
+    def test_history_uses_local_run_time(self):
+        clock = mock.Mock()
+        clock.now.return_value.strftime.return_value = "2026-11-23 12:00:00"
+        with mock.patch.object(d, "datetime", clock):
+            history, _ = self.run_main(reply("Alice"))
+        self.assertEqual(history[0]["date"], "2026-11-23 12:00:00")
+
+    def test_message_says_when_api_has_no_drop(self):
+        data = reply("Alice")
+        data["top_items"] = []
+        _, posts = self.run_main(data, "Alice")
+        self.assertIn("gain non renseigné par l'API", posts[0])
 
     def test_empty_username_falls_back_to_api_nickname(self):
         history, _ = self.run_main(reply("Alice"))
