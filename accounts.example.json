@@ -1,7 +1,0 @@
-[
-  {
-    "name": "main",
-    "xsrf": "PLACE YOUR XSRF TOKEN HERE",
-    "session": "PLACE YOUR SESSION TOKEN HERE, 40 CHARACTERS"
-  }
-]

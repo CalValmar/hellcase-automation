@@ -1,6 +1,4 @@
 config.json
-accounts.json
-secrets.json
 history.json*
 __pycache__/
 AGENTS.md

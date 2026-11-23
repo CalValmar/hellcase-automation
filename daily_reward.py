@@ -37,12 +37,12 @@ def notify(webhook, message):
 
 
 def main():
-    accounts = load_json("accounts.json", [])
-    secrets = load_json("secrets.json", {})
-    webhook = secrets.get("discord_webhook_url")
+    config = load_json("config.json", {})
+    webhook = config.get("discord_webhook_url")
+    accounts = config.get("accounts", [])
     history = load_json("history.json", [])
 
-    for account in accounts:
+    for index, account in enumerate(accounts, 1):
         session = requests.session()
         session.cookies.update({
             "XSRF-TOKEN": account["xsrf"],
@@ -52,21 +52,26 @@ def main():
             response = session.get(API_URL, timeout=30)
             data = response.json()
         except (requests.RequestException, ValueError):
-            notify(webhook, f"{account['name']}: appel échoué")
+            notify(webhook, f"Compte #{index}: appel échoué")
             continue
 
-        user_id = (data.get("user") or {}).get("id")
+        user = data.get("user") or {}
+        label = user.get("nickname") or f"compte #{index}"
+        user_id = user.get("id")
         weapon, price = extract_drop(data, user_id)
         history.append({
             "date": data.get("last_open_date"),
-            "account": account["name"],
+            "account": label,
             "user_id": user_id,
             "case": data.get("casename"),
             "weapon": weapon,
             "price": price,
         })
+
+        message = f"{label}: {data.get('status')}"
         if weapon:
-            notify(webhook, f"{account['name']}: {weapon} — {price}")
+            message += f" — {weapon} ({price})"
+        notify(webhook, message)
         time.sleep(random.uniform(5, 20))
 
     with open("history.json.tmp", "w") as f:
