@@ -1,3 +1,4 @@
+import fcntl
 import json
 import os
 import random
@@ -59,6 +60,9 @@ def main():
         nickname = user.get("nickname")
         configured = account.get("username")
         label = configured or nickname or f"compte #{index}"
+        if data.get("status") != "success" or data.get("case_is_opened") is False:
+            notify(webhook, f"{label}: ouverture échouée — vérifie le token")
+            continue
         if configured and nickname and configured != nickname:
             notify(webhook, f"{label}: pseudo configuré « {configured} » ≠ pseudo Hellcase « {nickname} » — vérifie les tokens")
         user_id = user.get("id")
@@ -76,12 +80,22 @@ def main():
         if weapon:
             message += f" — {weapon} ({price})"
         notify(webhook, message)
-        time.sleep(random.uniform(5, 20))
+        if index < len(accounts):
+            time.sleep(random.uniform(5, 20))
 
     with open("history.json.tmp", "w") as f:
         json.dump(history, f, indent=2)
     os.replace("history.json.tmp", "history.json")
 
 
+def run_locked():
+    try:
+        with open("daily-reward.lock", "a") as lock:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            main()
+    except BlockingIOError:
+        pass
+
+
 if __name__ == "__main__":
-    main()
+    run_locked()
