@@ -35,4 +35,4 @@ systemctl --user enable daily-reward.timer
 
 Start the timer with `systemctl --user start daily-reward.timer` when you are ready — the first run really opens the case. Check it with `systemctl --user list-timers --all` and `journalctl --user -u daily-reward.service -f`.
 
-The timer runs daily and `Persistent=true` catches up a missed run after a reboot. When the session token expires, edit `config.json` locally; no code change is needed.
+The timer runs daily with a random delay of up to 2 hours, and `Persistent=true` catches up a missed run after a reboot. When the session token expires, edit `config.json` locally; no code change is needed.

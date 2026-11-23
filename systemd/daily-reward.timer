@@ -4,6 +4,7 @@ Description=Daily Hellcase Newbie case
 [Timer]
 OnCalendar=daily
 Persistent=true
+RandomizedDelaySec=2h
 Unit=daily-reward.service
 
 [Install]
