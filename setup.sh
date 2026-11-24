@@ -9,15 +9,16 @@ CONFIG_PATH="$CONFIG_DIR/config.json"
 STATE_PATH="$STATE_DIR/state.json"
 HISTORY_PATH="$STATE_DIR/history.json"
 
-git pull --ff-only
-python3 -m pip install --user requests
-
 systemctl --user stop daily-reward.timer 2>/dev/null || true
 systemctl --user clean --what=state daily-reward.timer 2>/dev/null || true
-if systemctl --user is-active --quiet daily-reward.service; then
+active_state=$(systemctl --user show -p ActiveState --value daily-reward.service 2>/dev/null || true)
+if systemctl --user is-active --quiet daily-reward.service || [ "$active_state" = "activating" ]; then
   echo "daily-reward.service is still running; retry when it finishes" >&2
   exit 1
 fi
+
+git pull --ff-only
+python3 -m pip install --user requests
 
 mkdir -p "$CONFIG_DIR" "$STATE_DIR"
 chmod 700 "$CONFIG_DIR" "$STATE_DIR"

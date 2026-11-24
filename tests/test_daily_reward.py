@@ -374,6 +374,15 @@ class DailyRewardTest(unittest.TestCase):
             fcntl.flock(lock, fcntl.LOCK_UN)
             lock.close()
 
+    def test_default_paths_stay_outside_the_checkout(self):
+        home = os.path.expanduser("~")
+        config_dir = os.path.join(home, ".config", "hellcase-automation")
+        state_dir = os.path.join(home, ".local", "state", "hellcase-automation")
+        self.assertEqual(d.CONFIG_PATH, os.path.join(config_dir, "config.json"))
+        self.assertEqual(d.STATE_PATH, os.path.join(state_dir, "state.json"))
+        self.assertEqual(d.HISTORY_PATH, os.path.join(state_dir, "history.json"))
+        self.assertEqual(d.LOCK_PATH, os.path.join(state_dir, "daily-reward.lock"))
+
     def test_lock_uses_configured_path_outside_cwd(self):
         data_dir = pathlib.Path(self.tmp.name) / "data"
         data_dir.mkdir()
