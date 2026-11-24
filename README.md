@@ -11,8 +11,8 @@ Unofficial script that opens the Hellcase Newbie case for several accounts, reco
 Clone at `~/Documents/PERSO/Projets/hellcase-automation` (or edit `systemd/daily-reward.service` before running setup). From an old checkout, run `git pull` **first**, then `./setup.sh`, so the migration code is in the script you execute. On a fresh clone, just run `./setup.sh`.
 
 ```bash
-git pull            # old checkout only; skip on a fresh clone
-./setup.sh          # creates config.json if missing, then stops
+git pull
+./setup.sh
 # fill ~/.config/hellcase-automation/config.json
 ./setup.sh
 systemctl --user list-timers daily-reward.timer
