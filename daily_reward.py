@@ -57,6 +57,7 @@ def main():
         if index > 1:
             time.sleep(random.uniform(5, 20))
         label = f"compte #{index}"
+        open_id = None
         try:
             label = account.get("username") or label
             session = requests.session()
@@ -77,16 +78,16 @@ def main():
                                  headers={"X-CSRF-Token": account["xsrf"]}).json()
             if claim.get("status") != "success" or not claim.get("open_id"):
                 reason = claim.get("error_message") or "raison inconnue"
-                if reason == "user_level.reward.already_claim":
-                    notify(webhook, f"{label}: caisse déjà réclamée aujourd'hui")
-                else:
+                # "already_claim" is the expected answer on 3 of 4 daily checks.
+                if reason != "user_level.reward.already_claim":
                     notify(webhook, f"{label}: ouverture échouée — {reason}")
                 continue
+            open_id = claim.get("open_id")
             state = session.get(STATE_URL, timeout=30).json()
             drop = extract_drop(state) if state.get("status") == "success" and state.get("bought") else None
 
             if not drop or not drop["weapon"]:
-                notify(webhook, f"{label}: gain non renseigné par l'API")
+                notify(webhook, f"{label}: gain non renseigné par l'API (open_id {open_id})")
                 continue
 
             history.append({
@@ -102,13 +103,18 @@ def main():
                 "open_id": drop["open_id"],
             })
         except (requests.RequestException, ValueError, KeyError, TypeError, AttributeError):
-            notify(webhook, f"{label}: appel échoué — réseau ou réponse inattendue")
+            detail = f" (open_id {open_id})" if open_id else ""
+            notify(webhook, f"{label}: appel échoué — réseau ou réponse inattendue{detail}")
             continue
 
-        with open("history.json.tmp", "w") as f:
-            json.dump(history, f, indent=2)
-        os.chmod("history.json.tmp", 0o600)
-        os.replace("history.json.tmp", "history.json")
+        try:
+            with open("history.json.tmp", "w") as f:
+                json.dump(history, f, indent=2)
+            os.chmod("history.json.tmp", 0o600)
+            os.replace("history.json.tmp", "history.json")
+        except OSError:
+            notify(webhook, f"{label}: historique non écrit — disque ou permissions (open_id {open_id})")
+            continue
 
         message = f"{label}: {drop['weapon']} — {drop['price']} $"
         if drop["skin"]:

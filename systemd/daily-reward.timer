@@ -2,9 +2,9 @@
 Description=Daily Hellcase Newbie case
 
 [Timer]
-OnCalendar=daily
+OnCalendar=*-*-* 00,06,12,18:00:00 UTC
 Persistent=true
-RandomizedDelaySec=2h
+AccuracySec=1s
 Unit=daily-reward.service
 
 [Install]

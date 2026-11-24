@@ -195,17 +195,39 @@ class DailyRewardTest(unittest.TestCase):
         self.assertIn("user_level.not_allowed", posts[0])
         self.assertNotIn("vérifie le token", posts[0])
 
-    def test_already_claimed_says_so_instead_of_blaming_token(self):
+    def test_already_claimed_is_silent_without_history(self):
         claim = claim_reply(status="error", error_message="user_level.reward.already_claim")
         history, posts, _ = self.run_main(claim=claim)
         self.assertEqual(history, [])
-        self.assertIn("déjà réclamée aujourd'hui", posts[0])
-        self.assertNotIn("vérifie le token", posts[0])
+        self.assertEqual(posts, [])
+
+    def test_already_claimed_does_not_stop_later_accounts(self):
+        accounts = [
+            {"username": "Alice", "xsrf": "x", "session": "s"},
+            {"username": "Bob", "xsrf": "x", "session": "s"},
+        ]
+        already = claim_reply(status="error", error_message="user_level.reward.already_claim")
+        sessions = [FakeSession("Alice", claim=already), FakeSession("Bob")]
+        history, posts, _ = self.run_main(accounts=accounts, sessions=sessions)
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["account"], "Bob")
+        self.assertEqual(len(posts), 1)
+        self.assertIn("Bob", posts[0])
+        self.assertNotIn(d.STATE_URL, sessions[0].get_calls)
 
     def test_state_without_weapon_is_not_recorded(self):
         history, posts, _ = self.run_main(state=state_reply(bought=False, weapons=[]))
         self.assertEqual(history, [])
         self.assertIn("gain non renseigné par l'API", posts[0])
+
+    def test_missing_drop_alert_shows_open_id(self):
+        _, posts, _ = self.run_main(state=state_reply(bought=False, weapons=[]))
+        self.assertIn("open_id 123", posts[0])
+
+    def test_state_failure_alert_shows_open_id(self):
+        _, posts, _ = self.run_main(fail=d.STATE_URL)
+        self.assertIn("appel échoué", posts[0])
+        self.assertIn("open_id 123", posts[0])
 
     def test_failed_call_names_configured_user(self):
         _, posts, _ = self.run_main(username="Alice", fail=d.API_URL)
@@ -230,6 +252,28 @@ class DailyRewardTest(unittest.TestCase):
         self.run_main()
         mode = stat.S_IMODE(pathlib.Path("history.json").stat().st_mode)
         self.assertEqual(mode, 0o600)
+
+    def test_history_write_failure_alerts_and_continues(self):
+        accounts = [
+            {"username": "Alice", "xsrf": "x", "session": "s"},
+            {"username": "Bob", "xsrf": "x", "session": "s"},
+        ]
+        sessions = [FakeSession("Alice"), FakeSession("Bob")]
+        real_open = open
+
+        def failing_open(path, *args, **kwargs):
+            if path == "history.json.tmp":
+                raise OSError("disk full")
+            return real_open(path, *args, **kwargs)
+
+        with mock.patch("builtins.open", side_effect=failing_open):
+            history, posts, _ = self.run_main(accounts=accounts, sessions=sessions)
+        self.assertEqual(history, [])
+        self.assertEqual(len(posts), 2)
+        self.assertIn("Alice", posts[0])
+        self.assertIn("Bob", posts[1])
+        self.assertIn("historique non écrit", posts[0])
+        self.assertIn("open_id 123", posts[0])
 
     def test_existing_history_is_preserved(self):
         old = [{"account": "Old", "weapon": "AK", "price": 1.0}]
