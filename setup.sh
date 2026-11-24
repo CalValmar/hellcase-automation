@@ -21,7 +21,7 @@ if not any(a.get("xsrf") and a.get("session") for a in config.get("accounts", []
     raise SystemExit("config.json needs at least one account with xsrf and session")
 PY
 
-python3 -m unittest -q test_daily_reward
+python3 -m unittest discover -s tests -t . -q
 
 touch history.json state.json
 chmod 600 config.json history.json state.json
