@@ -16,9 +16,9 @@ Python script that opens the Hellcase Newbie case daily for one or several accou
 # setup
 Copy `config.example.json` to `config.json`, then fill two things:
 - `discord_webhook_url`: leave empty to disable notifications.
-- `accounts`: one `{username, xsrf, session}` object per account. `username` is your own label, shown in Discord and history. If it is set and differs from the nickname returned by the API (exact match, case sensitive), a Discord warning is sent — this catches tokens filed under the wrong name. Leave it empty to fall back to the API nickname.
+- `accounts`: one `{username, xsrf, session}` object per account. `username` is only a local label, shown in Discord and history, so you can tell your accounts apart. Leave it empty to fall back to the nickname returned by Hellcase. There is no check against the API nickname.
 
-`config.json` and `history.json` are gitignored; never commit them. Run `chmod 600 config.json history.json` so other users on the server cannot read the tokens.
+`config.json` and `history.json` are gitignored; never commit them. Run `chmod 600 config.json history.json` so other users on the server cannot read the tokens. Network captures (`capture.json`, `newbie*.json`, `state.json`) are gitignored too: they contain `auth_code` and a Steam trade link.
 
 To add a friend's account, append another `{username, xsrf, session}` object to `accounts`.
 
@@ -46,13 +46,24 @@ systemctl --user enable daily-reward.timer
 
 Start the timer with `systemctl --user start daily-reward.timer` when you are ready — the first run really opens the case for every account.
 
-The script prints nothing. It appends each successful open to `history.json` (gitignored) with account nickname, user id, case, date, weapon and price, then posts one Discord message per account. A failed open is reported on Discord and is not recorded, so the history stays truthful. Raw API responses are never logged: they contain account tokens.
+The script prints nothing. For each account it claims the daily free case, reads the resulting drop from the state endpoint, appends it to `history.json` (gitignored) with account label, user id, case, date, weapon, skin, price, rarity, exterior and open id, then posts one Discord message per account:
+
+```
+Valmar: MP7 | Forest DDPAT — 0.03 $ (Forest DDPAT, consumer, Field-Tested)
+```
+
+A failed claim or a response without a drop is reported on Discord and is not recorded, so the history stays truthful. Raw API responses are never logged: they contain account tokens.
 
 A lock file (`daily-reward.lock`) makes a second run exit immediately if one is already running. A failed run is not retried automatically: a blind retry could open the same case twice. Run `python3 -m unittest -v test_daily_reward` for offline tests, and `python3 stats.py` to print the number of opens and the total price per account (no API call).
 
 The timer runs daily with a random delay of up to 2 hours, and `Persistent=true` catches up a missed run after a reboot. When a session token expires, edit `config.json` locally; no code change is needed. If a run fails, fix the cause and relaunch it by hand with `python3 daily_reward.py` from the repo root; the lock file prevents an overlap with the timer.
 
-# known limitations
-A real response was captured in `capture.json` (local, gitignored). It has no drop for the current user: `top_items` lists the last six opens by other players, so `weapon` and `price` stay null and `stats.py` shows `0.00`. The drop, if any, must come from another endpoint called by the website after the click.
+# how the API flow was identified
+Real responses are saved locally in `capture.json`, `newbie.json`, `state.json` and `newbie2.json` (all gitignored). `GET /open/newbie` only returns the case page — no drop. The site's own JavaScript (`useBoxService`) shows the real sequence:
 
-There is no countdown field either. `last_open_date` matches the newest `top_items` entry, which belongs to another player, so history rows use the local run time instead. On the captured response `need_refill` was `0.06` with a `0.04` balance while `status` was `success`: the API alone does not prove that a free opening really happened.
+1. `POST /user_level/claim_free_case/newbie` with `X-CSRF-Token` → `open_id`
+2. `GET /open/newbie/state` → `bought` and `weapons[0]` (the drop)
+3. `GET /open/newbie` → case page, used here only for the account nickname
+
+# known limitations
+There is no countdown field. `last_open_date` is not a reliable personal date — in a real capture it did not match the newest `top_items` entry either — so history rows use the local run time. A manual run really claims the case; do not use it just to "check" availability.

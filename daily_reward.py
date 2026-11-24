@@ -8,6 +8,8 @@ from datetime import datetime
 import requests
 
 API_URL = "https://api.hellcase.com/open/newbie"
+CLAIM_URL = "https://api.hellcase.com/user_level/claim_free_case/newbie"
+STATE_URL = "https://api.hellcase.com/open/newbie/state"
 
 
 def load_json(path, default):
@@ -18,15 +20,22 @@ def load_json(path, default):
         return default
 
 
-def extract_drop(data, user_id):
-    # shortcut: /open/newbie has no drop field and top_items are other players, so this stays empty until the real endpoint is known
-    for entry in data.get("top_items", []):
-        if (entry.get("user") or {}).get("id") != user_id:
-            continue
-        for item in entry.get("items", []):
-            if item.get("drop_type") == "item":
-                return item.get("weapon_name"), entry.get("steam_price_en")
-    return None, None
+def extract_drop(data):
+    weapons = data.get("weapons") or []
+    if not weapons:
+        return None
+    item = weapons[0]
+    price = item.get("steam_price_en")
+    if price is None:
+        price = item.get("item_price")
+    return {
+        "weapon": item.get("item_name"),
+        "skin": item.get("skin_name"),
+        "price": price,
+        "rarity": item.get("rarity"),
+        "exterior": item.get("steam_exterior"),
+        "open_id": item.get("id"),
+    }
 
 
 def notify(webhook, message):
@@ -50,43 +59,45 @@ def main():
             "XSRF-TOKEN": account["xsrf"],
             "hellcase_session": account["session"],
         })
+        label = account.get("username") or f"compte #{index}"
         try:
-            response = session.get(API_URL, timeout=30)
-            data = response.json()
+            info = session.get(API_URL, timeout=30).json()
+            label = account.get("username") or (info.get("user") or {}).get("nickname") or label
+            claim = session.post(CLAIM_URL, timeout=30,
+                                 headers={"X-CSRF-Token": account["xsrf"]}).json()
+            if claim.get("status") != "success" or not claim.get("open_id"):
+                notify(webhook, f"{label}: ouverture échouée — vérifie le token")
+                continue
+            state = session.get(STATE_URL, timeout=30).json()
         except (requests.RequestException, ValueError):
-            name = account.get("username") or f"Compte #{index}"
-            notify(webhook, f"{name}: appel échoué — vérifie le token")
+            notify(webhook, f"{label}: appel échoué — vérifie le token")
             continue
 
-        user = data.get("user") or {}
-        nickname = user.get("nickname")
-        configured = account.get("username")
-        label = configured or nickname or f"compte #{index}"
-        if data.get("status") != "success" or data.get("case_is_opened") is False:
-            notify(webhook, f"{label}: ouverture échouée — vérifie le token")
+        drop = extract_drop(state) if state.get("status") == "success" and state.get("bought") else None
+        if not drop or not drop["weapon"]:
+            notify(webhook, f"{label}: gain non renseigné par l'API")
             continue
-        if configured and nickname and configured != nickname:
-            notify(webhook, f"{label}: pseudo configuré « {configured} » ≠ pseudo Hellcase « {nickname} » — vérifie les tokens")
-        user_id = user.get("id")
-        weapon, price = extract_drop(data, user_id)
+
         history.append({
             "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "account": label,
-            "user_id": user_id,
-            "case": data.get("casename"),
-            "weapon": weapon,
-            "price": price,
+            "user_id": state.get("user_id"),
+            "case": info.get("casename"),
+            "weapon": drop["weapon"],
+            "skin": drop["skin"],
+            "price": drop["price"],
+            "rarity": drop["rarity"],
+            "exterior": drop["exterior"],
+            "open_id": drop["open_id"],
         })
 
         with open("history.json.tmp", "w") as f:
             json.dump(history, f, indent=2)
         os.replace("history.json.tmp", "history.json")
 
-        message = f"{label}: {data.get('status')}"
-        if weapon:
-            message += f" — {weapon} ({price})"
-        else:
-            message += " — gain non renseigné par l'API"
+        message = f"{label}: {drop['weapon']} — {drop['price']} $"
+        if drop["skin"]:
+            message += f" ({drop['skin']}, {drop['rarity']}, {drop['exterior']})"
         notify(webhook, message)
         if index < len(accounts):
             time.sleep(random.uniform(5, 20))
