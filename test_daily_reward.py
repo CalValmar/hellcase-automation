@@ -2,6 +2,7 @@ import fcntl
 import json
 import os
 import pathlib
+import stat
 import tempfile
 import unittest
 from unittest import mock
@@ -57,9 +58,9 @@ def weapon():
     }
 
 
-def state_reply(bought=True, weapons=None):
+def state_reply(bought=True, weapons=None, status="success"):
     return {
-        "status": "success",
+        "status": status,
         "bought": bought,
         "user_id": 7,
         "case_name": "newbie",
@@ -76,10 +77,12 @@ def state_reply(bought=True, weapons=None):
 
 
 class FakeSession:
-    def __init__(self, nickname="Alice", claim=None, state=None, fail=None):
+    def __init__(self, nickname="Alice", claim=None, state=None, fail=None, fail_once=None):
         self.cookies = mock.Mock()
         self.headers = None
         self.fail = fail
+        self.fail_once = fail_once
+        self.get_calls = []
         self.data = {
             d.API_URL: case_info(nickname),
             CLAIM_URL: claim or claim_reply(),
@@ -88,6 +91,10 @@ class FakeSession:
 
     def get(self, url, timeout=None):
         assert timeout == 30
+        self.get_calls.append(url)
+        if url == self.fail_once:
+            self.fail_once = None
+            raise d.requests.RequestException("down")
         if url == self.fail:
             raise d.requests.RequestException("down")
         return mock.Mock(json=lambda: self.data[url])
@@ -111,18 +118,33 @@ class DailyRewardTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def run_main(self, nickname="Alice", username="", claim=None, state=None,
-                 fail=None, accounts=None):
+                 fail=None, accounts=None, sessions=None, history_seed=None,
+                 sleep_calls=None):
         if accounts is None:
             accounts = [{"username": username, "xsrf": "xsrf-token", "session": "s"}]
-        session = FakeSession(nickname, claim, state, fail)
+        if sessions is None:
+            sessions = FakeSession(nickname, claim, state, fail)
+        if isinstance(sessions, list):
+            session = sessions[0]
+            session_patch = mock.patch.object(d.requests, "session", side_effect=sessions)
+        else:
+            session = sessions
+            session_patch = mock.patch.object(d.requests, "session", return_value=session)
         posts = []
-        with mock.patch.object(d.requests, "session", return_value=session), \
+        sleep_calls = [] if sleep_calls is None else sleep_calls
+
+        def fake_load(path, default):
+            if path == "config.json":
+                return {"discord_webhook_url": "https://example.invalid/hook", "accounts": accounts}
+            if path == "history.json" and history_seed is not None:
+                return history_seed
+            return default
+
+        with session_patch, \
              mock.patch.object(d.requests, "post",
                                side_effect=lambda url, json=None, timeout=None: posts.append(json["content"])), \
-             mock.patch.object(d.time, "sleep"), \
-             mock.patch.object(d, "load_json", side_effect=lambda path, default: (
-                 {"discord_webhook_url": "https://example.invalid/hook", "accounts": accounts}
-                 if path == "config.json" else default)):
+             mock.patch.object(d.time, "sleep", side_effect=sleep_calls.append), \
+             mock.patch.object(d, "load_json", side_effect=fake_load):
             d.main()
         path = pathlib.Path("history.json")
         history = json.loads(path.read_text()) if path.exists() else []
@@ -142,11 +164,11 @@ class DailyRewardTest(unittest.TestCase):
         self.assertIn("0.03", posts[0])
         self.assertEqual(session.headers, {"X-CSRF-Token": "xsrf-token"})
 
-    def test_configured_username_does_not_emit_nickname_warning(self):
-        _, posts, _ = self.run_main(nickname="Bob", username="Bobby")
-        self.assertEqual(len(posts), 1)
-        self.assertNotIn("pseudo configuré", posts[0])
+    def test_configured_username_is_used_instead_of_api_nickname(self):
+        history, posts, _ = self.run_main(nickname="API-Nick", username="Bobby")
         self.assertIn("Bobby", posts[0])
+        self.assertNotIn("API-Nick", posts[0])
+        self.assertEqual(history[0]["account"], "Bobby")
 
     def test_empty_username_falls_back_to_api_nickname(self):
         history, _, _ = self.run_main(nickname="Alice")
@@ -198,18 +220,72 @@ class DailyRewardTest(unittest.TestCase):
             {"username": "Alice", "xsrf": "x", "session": "s"},
             {"username": "Bob", "xsrf": "x", "session": "s"},
         ]
-        with mock.patch.object(d.requests, "session",
-                               side_effect=[FakeSession("Alice"), RuntimeError("boom")]), \
-             mock.patch.object(d.requests, "post"), \
-             mock.patch.object(d.time, "sleep"), \
-             mock.patch.object(d, "load_json", side_effect=lambda path, default: (
-                 {"discord_webhook_url": "", "accounts": accounts}
-                 if path == "config.json" else default)):
-            with self.assertRaises(RuntimeError):
-                d.main()
-        history = json.loads(pathlib.Path("history.json").read_text())
+        sessions = [FakeSession("Alice"), FakeSession("Bob", claim=claim_reply(status="error"))]
+        history, posts, _ = self.run_main(accounts=accounts, sessions=sessions)
         self.assertEqual(len(history), 1)
         self.assertEqual(history[0]["account"], "Alice")
+        self.assertEqual(len(posts), 2)
+
+    def test_history_file_is_private(self):
+        self.run_main()
+        mode = stat.S_IMODE(pathlib.Path("history.json").stat().st_mode)
+        self.assertEqual(mode, 0o600)
+
+    def test_existing_history_is_preserved(self):
+        old = [{"account": "Old", "weapon": "AK", "price": 1.0}]
+        history, _, _ = self.run_main(history_seed=old)
+        self.assertEqual(history[0], old[0])
+        self.assertEqual(len(history), 2)
+
+    def test_zero_steam_price_is_not_replaced_by_fallback(self):
+        weapon_data = weapon()
+        weapon_data["steam_price_en"] = 0
+        drop = d.extract_drop({"weapons": [weapon_data]})
+        self.assertEqual(drop["price"], 0)
+
+    def test_network_error_on_info_is_retried_once(self):
+        session = FakeSession(fail_once=d.API_URL)
+        history, posts, _ = self.run_main(sessions=session)
+        self.assertEqual(len(history), 1)
+        self.assertEqual(session.get_calls.count(d.API_URL), 2)
+        self.assertEqual(len(posts), 1)
+
+    def test_delay_applies_after_failed_account(self):
+        accounts = [
+            {"username": "Alice", "xsrf": "x", "session": "s"},
+            {"username": "Bob", "xsrf": "x", "session": "s"},
+        ]
+        sessions = [FakeSession("Alice", claim=claim_reply(status="error")), FakeSession("Bob")]
+        sleep_calls = []
+        history, posts, _ = self.run_main(accounts=accounts, sessions=sessions,
+                                          sleep_calls=sleep_calls)
+        self.assertEqual(len(history), 1)
+        self.assertEqual(len(posts), 2)
+        self.assertEqual(len(sleep_calls), 1)
+
+    def test_malformed_account_does_not_stop_later_accounts(self):
+        accounts = [
+            {"username": "Broken"},
+            {"username": "Bob", "xsrf": "x", "session": "s"},
+        ]
+        sessions = [FakeSession("Broken"), FakeSession("Bob")]
+        history, posts, _ = self.run_main(accounts=accounts, sessions=sessions)
+        self.assertEqual(len(posts), 2)
+        self.assertIn("Broken", posts[0])
+        self.assertEqual(history[0]["account"], "Bob")
+
+    def test_non_dict_api_response_does_not_stop_later_accounts(self):
+        accounts = [
+            {"username": "Alice", "xsrf": "x", "session": "s"},
+            {"username": "Bob", "xsrf": "x", "session": "s"},
+        ]
+        first = FakeSession("Alice")
+        first.data[d.API_URL] = []
+        history, posts, _ = self.run_main(accounts=accounts,
+                                          sessions=[first, FakeSession("Bob")])
+        self.assertEqual(len(posts), 2)
+        self.assertIn("appel échoué", posts[0])
+        self.assertEqual(history[0]["account"], "Bob")
 
     def test_lock_skips_second_run(self):
         lock = open("daily-reward.lock", "a")

@@ -3,4 +3,3 @@ config.json
 history.json*
 *.lock
 __pycache__/
-AGENTS.md
