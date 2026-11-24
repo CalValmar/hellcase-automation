@@ -5,23 +5,28 @@ Unofficial script that opens the Hellcase Newbie case for several accounts, reco
 - Python 3.6+, `requests` (`python3 -m pip install requests`).
 - Copy `config.example.json` to gitignored `config.json`: `discord_webhook_url` (empty disables alerts) and `accounts` = `{username, xsrf, session}` objects. `username` is a local label only; empty falls back to the API nickname. Keep account order stable: `state.json` keys by index.
 - Get `XSRF-TOKEN` and `hellcase_session` from browser cookies on hellcase.com; edit `config.json` when they expire (~30 days).
-- `touch history.json state.json && chmod 600 config.json history.json state.json`.
 
-## Run
-Manual: `python3 daily_reward.py` really claims cases. Tests: `python3 -m unittest -v test_daily_reward` (offline, no API call).
-
-Timer: units in `systemd/` assume a clone at `~/Documents/PERSO/Projets/hellcase-automation`; edit the two paths if needed.
+## On the server
+Run these on the server itself. Paths assume `~/Documents/PERSO/Projets/hellcase-automation`; edit the two unit paths if yours differs.
 
 ```bash
+cd ~/Documents/PERSO/Projets/hellcase-automation
+git pull --ff-only
+python3 -m pip install --user requests
+[ -f config.json ] || cp config.example.json config.json   # then fill tokens/webhook
+touch history.json state.json
+chmod 600 config.json history.json state.json
 mkdir -p ~/.config/systemd/user
 cp systemd/daily-reward.* ~/.config/systemd/user/
 sudo loginctl enable-linger "$USER"
+systemctl --user stop daily-reward.timer 2>/dev/null || true
+systemctl --user clean --what=state daily-reward.timer 2>/dev/null || true
 systemctl --user daemon-reload
 systemctl --user enable --now daily-reward.timer
 systemctl --user list-timers daily-reward.timer
 ```
 
-On upgrade, run `systemctl --user stop daily-reward.timer`, `systemctl --user clean --what=state daily-reward.timer`, `daemon-reload`, then `systemctl --user restart daily-reward.timer` (cleaning avoids a stale catch-up claim).
+`enable-linger` needs your sudo password and is required to keep the timer running after logout. The `stop`/`clean` lines avoid a stale catch-up claim on upgrade. After editing `config.json`, rerun the `chmod` line. A manual `python3 daily_reward.py` really claims cases; tests are offline: `python3 -m unittest -v test_daily_reward`.
 
 ## Behavior
 - Hourly UTC timer with a random 0–30 min delay. Each run picks up to 2 due accounts, shuffled, 30–180 s apart.
