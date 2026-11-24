@@ -3,13 +3,15 @@ import json
 import os
 import random
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 import requests
 
 API_URL = "https://api.hellcase.com/open/newbie"
 CLAIM_URL = "https://api.hellcase.com/user_level/claim_free_case/newbie"
 STATE_URL = "https://api.hellcase.com/open/newbie/state"
+COOLDOWN = 24 * 3600 + 60
+MAX_PER_RUN = 2
 
 
 def load_json(path, default):
@@ -18,6 +20,34 @@ def load_json(path, default):
             return json.load(f)
     except FileNotFoundError:
         return default
+
+
+def save_json(path, data):
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f, indent=2)
+    os.chmod(tmp, 0o600)
+    os.replace(tmp, path)
+
+
+def utc_day(timestamp):
+    return datetime.fromtimestamp(timestamp, timezone.utc).strftime("%Y-%m-%d")
+
+
+def load_state():
+    try:
+        data = load_json("state.json", {})
+    except ValueError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def load_history():
+    try:
+        data = load_json("history.json", [])
+    except ValueError:
+        return []
+    return data if isinstance(data, list) else []
 
 
 def extract_drop(data):
@@ -47,17 +77,49 @@ def notify(webhook, message):
         pass
 
 
+def alert(webhook, state, key, day, message):
+    record = state.setdefault(key, {})
+    if record.get("last_error_day") == day:
+        return
+    record["last_error_day"] = day
+    notify(webhook, message)
+
+
+def due_accounts(accounts, state, now):
+    day = utc_day(now)
+    picked = []
+    for index, account in enumerate(accounts, 1):
+        key = str(index)
+        record = state.get(key)
+        if not isinstance(record, dict):
+            record = state[key] = {}
+        last = record.get("last_claim")
+        if isinstance(last, (int, float)) and now - last < COOLDOWN:
+            continue
+        if record.get("last_attempt_day") == day:
+            continue
+        picked.append((index, account, key))
+    random.shuffle(picked)
+    return picked[:MAX_PER_RUN]
+
+
 def main():
     config = load_json("config.json", {})
     webhook = config.get("discord_webhook_url")
     accounts = config.get("accounts", [])
-    history = load_json("history.json", [])
+    history = load_history()
+    state = load_state()
+    now = time.time()
+    first = True
 
-    for index, account in enumerate(accounts, 1):
-        if index > 1:
-            time.sleep(random.uniform(5, 20))
+    for index, account, key in due_accounts(accounts, state, now):
+        if not first:
+            time.sleep(random.uniform(30, 180))
+        first = False
+        day = utc_day(time.time())
         label = f"compte #{index}"
         open_id = None
+        state.setdefault(key, {})["last_attempt_day"] = day
         try:
             label = account.get("username") or label
             session = requests.session()
@@ -78,22 +140,25 @@ def main():
                                  headers={"X-CSRF-Token": account["xsrf"]}).json()
             if claim.get("status") != "success" or not claim.get("open_id"):
                 reason = claim.get("error_message") or "raison inconnue"
-                # "already_claim" is the expected answer on 3 of 4 daily checks.
-                if reason != "user_level.reward.already_claim":
-                    notify(webhook, f"{label}: ouverture échouée — {reason}")
+                if reason == "user_level.reward.already_claim":
+                    # Covers a claim made in the browser: no second POST for 24h.
+                    state[key]["last_claim"] = time.time()
+                else:
+                    alert(webhook, state, key, day, f"{label}: ouverture échouée — {reason}")
                 continue
+            state[key]["last_claim"] = time.time()
             open_id = claim.get("open_id")
-            state = session.get(STATE_URL, timeout=30).json()
-            drop = extract_drop(state) if state.get("status") == "success" and state.get("bought") else None
+            state_reply = session.get(STATE_URL, timeout=30).json()
+            drop = extract_drop(state_reply) if state_reply.get("status") == "success" and state_reply.get("bought") else None
 
             if not drop or not drop["weapon"]:
-                notify(webhook, f"{label}: gain non renseigné par l'API (open_id {open_id})")
+                alert(webhook, state, key, day, f"{label}: gain non renseigné par l'API (open_id {open_id})")
                 continue
 
             history.append({
                 "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
                 "account": label,
-                "user_id": state.get("user_id"),
+                "user_id": state_reply.get("user_id"),
                 "case": info.get("casename"),
                 "weapon": drop["weapon"],
                 "skin": drop["skin"],
@@ -104,16 +169,21 @@ def main():
             })
         except (requests.RequestException, ValueError, KeyError, TypeError, AttributeError):
             detail = f" (open_id {open_id})" if open_id else ""
-            notify(webhook, f"{label}: appel échoué — réseau ou réponse inattendue{detail}")
+            alert(webhook, state, key, day,
+                  f"{label}: appel échoué — réseau ou réponse inattendue{detail}")
             continue
+        finally:
+            try:
+                save_json("state.json", state)
+            except OSError:
+                detail = f" (open_id {open_id})" if open_id else ""
+                notify(webhook, f"{label}: état local non écrit — disque ou permissions{detail}")
 
         try:
-            with open("history.json.tmp", "w") as f:
-                json.dump(history, f, indent=2)
-            os.chmod("history.json.tmp", 0o600)
-            os.replace("history.json.tmp", "history.json")
+            save_json("history.json", history)
         except OSError:
-            notify(webhook, f"{label}: historique non écrit — disque ou permissions (open_id {open_id})")
+            alert(webhook, state, key, day,
+                  f"{label}: historique non écrit — disque ou permissions (open_id {open_id})")
             continue
 
         message = f"{label}: {drop['weapon']} — {drop['price']} $"

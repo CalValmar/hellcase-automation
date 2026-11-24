@@ -5,6 +5,7 @@ import pathlib
 import stat
 import tempfile
 import unittest
+from datetime import datetime, timezone
 from unittest import mock
 
 import daily_reward as d
@@ -119,7 +120,7 @@ class DailyRewardTest(unittest.TestCase):
 
     def run_main(self, nickname="Alice", username="", claim=None, state=None,
                  fail=None, accounts=None, sessions=None, history_seed=None,
-                 sleep_calls=None):
+                 state_seed=None, sleep_calls=None):
         if accounts is None:
             accounts = [{"username": username, "xsrf": "xsrf-token", "session": "s"}]
         if sessions is None:
@@ -132,18 +133,22 @@ class DailyRewardTest(unittest.TestCase):
             session_patch = mock.patch.object(d.requests, "session", return_value=session)
         posts = []
         sleep_calls = [] if sleep_calls is None else sleep_calls
+        real_load = d.load_json
 
         def fake_load(path, default):
             if path == "config.json":
                 return {"discord_webhook_url": "https://example.invalid/hook", "accounts": accounts}
-            if path == "history.json" and history_seed is not None:
-                return history_seed
+            if path == "history.json":
+                return history_seed if history_seed is not None else real_load(path, default)
+            if path == "state.json":
+                return state_seed if state_seed is not None else real_load(path, default)
             return default
 
         with session_patch, \
              mock.patch.object(d.requests, "post",
                                side_effect=lambda url, json=None, timeout=None: posts.append(json["content"])), \
              mock.patch.object(d.time, "sleep", side_effect=sleep_calls.append), \
+             mock.patch.object(d.random, "shuffle", side_effect=lambda items: None), \
              mock.patch.object(d, "load_json", side_effect=fake_load):
             d.main()
         path = pathlib.Path("history.json")
@@ -177,6 +182,7 @@ class DailyRewardTest(unittest.TestCase):
     def test_history_uses_local_run_time(self):
         clock = mock.Mock()
         clock.now.return_value.strftime.return_value = "2026-11-23 12:00:00"
+        clock.fromtimestamp.return_value.strftime.return_value = "2026-11-23"
         with mock.patch.object(d, "datetime", clock):
             history, _, _ = self.run_main()
         self.assertEqual(history[0]["date"], "2026-11-23 12:00:00")
@@ -275,6 +281,19 @@ class DailyRewardTest(unittest.TestCase):
         self.assertIn("historique non écrit", posts[0])
         self.assertIn("open_id 123", posts[0])
 
+    def test_state_write_failure_alert_shows_open_id(self):
+        real_open = open
+
+        def failing_open(path, *args, **kwargs):
+            if path == "state.json.tmp":
+                raise OSError("disk full")
+            return real_open(path, *args, **kwargs)
+
+        with mock.patch("builtins.open", side_effect=failing_open):
+            _, posts, _ = self.run_main()
+        self.assertIn("état local non écrit", posts[0])
+        self.assertIn("open_id 123", posts[0])
+
     def test_existing_history_is_preserved(self):
         old = [{"account": "Old", "weapon": "AK", "price": 1.0}]
         history, _, _ = self.run_main(history_seed=old)
@@ -347,6 +366,91 @@ class DailyRewardTest(unittest.TestCase):
         self.assertEqual(drop["weapon"], "MP7 | Forest DDPAT")
         self.assertEqual(drop["price"], 0.03)
         self.assertEqual(drop["skin"], "Forest DDPAT")
+
+    def test_state_file_is_private_and_records_last_claim(self):
+        self.run_main()
+        path = pathlib.Path("state.json")
+        self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
+        state = json.loads(path.read_text())
+        self.assertIn("1", state)
+        self.assertIsInstance(state["1"]["last_claim"], (int, float))
+
+    def test_already_claim_records_last_claim_without_alert(self):
+        claim = claim_reply(status="error", error_message="user_level.reward.already_claim")
+        _, posts, _ = self.run_main(claim=claim)
+        state = json.loads(pathlib.Path("state.json").read_text())
+        self.assertEqual(posts, [])
+        self.assertIsInstance(state["1"]["last_claim"], (int, float))
+
+    def test_recent_claim_is_not_due(self):
+        accounts = [{"username": "Alice", "xsrf": "x", "session": "s"}]
+        state = {"1": {"last_claim": d.time.time() - 3600}}
+        self.assertEqual(d.due_accounts(accounts, state, d.time.time()), [])
+
+    def test_due_accounts_are_shuffled_and_limited_to_two(self):
+        accounts = [{"username": str(i), "xsrf": "x", "session": "s"} for i in range(1, 6)]
+        with mock.patch.object(d.random, "shuffle", side_effect=lambda items: items.reverse()):
+            picked = d.due_accounts(accounts, {}, d.time.time())
+        self.assertEqual([index for index, _, _ in picked], [5, 4])
+
+    def test_run_claims_at_most_two_accounts(self):
+        accounts = [{"username": str(i), "xsrf": "x", "session": "s"} for i in range(1, 6)]
+        sessions = [FakeSession(str(i)) for i in range(1, 6)]
+        sleep_calls = []
+        history, posts, _ = self.run_main(accounts=accounts, sessions=sessions,
+                                          sleep_calls=sleep_calls)
+        self.assertEqual(len(history), 2)
+        self.assertEqual(len(posts), 2)
+        self.assertEqual(len(sleep_calls), 1)
+        self.assertGreaterEqual(sleep_calls[0], 30)
+        self.assertLessEqual(sleep_calls[0], 180)
+
+    def test_empty_history_file_is_ignored(self):
+        pathlib.Path("history.json").write_text("")
+        self.run_main()
+        history = json.loads(pathlib.Path("history.json").read_text())
+        self.assertEqual(len(history), 1)
+
+    def test_empty_state_file_is_ignored(self):
+        pathlib.Path("state.json").write_text("")
+        self.run_main()
+        state = json.loads(pathlib.Path("state.json").read_text())
+        self.assertIn("1", state)
+
+    def test_wrong_state_shape_does_not_abort(self):
+        history, posts, _ = self.run_main(state_seed={"1": 5})
+        self.assertEqual(len(history), 1)
+        self.assertEqual(len(posts), 1)
+
+    def test_recent_attempt_is_not_due(self):
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        state = {"1": {"last_attempt_day": today}}
+        accounts = [{"username": "Alice", "xsrf": "x", "session": "s"}]
+        self.assertEqual(d.due_accounts(accounts, state, d.time.time()), [])
+
+    def test_failure_alert_is_deduplicated_per_utc_day(self):
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        state = {"1": {"last_error_day": today}}
+        _, posts, _ = self.run_main(fail=d.API_URL, state_seed=state)
+        self.assertEqual(posts, [])
+
+    def test_utc_day_is_recomputed_after_delay(self):
+        start = datetime(2026, 11, 24, 23, 59, 50, tzinfo=timezone.utc).timestamp()
+        accounts = [{"username": str(i), "xsrf": "x", "session": "s"} for i in (1, 2)]
+        sessions = [FakeSession("1"), FakeSession("2")]
+        times = [start, start, start + 200, start + 200, start + 200]
+        with mock.patch.object(d.time, "time", side_effect=times):
+            self.run_main(accounts=accounts, sessions=sessions)
+        state = json.loads(pathlib.Path("state.json").read_text())
+        self.assertEqual(state["2"]["last_attempt_day"], "2026-11-25")
+
+    def test_last_claim_uses_claim_time_not_run_start(self):
+        start = 1_800_000_000
+        times = [start, start, start + 190]
+        with mock.patch.object(d.time, "time", side_effect=times):
+            self.run_main()
+        state = json.loads(pathlib.Path("state.json").read_text())
+        self.assertEqual(state["1"]["last_claim"], start + 190)
 
 
 if __name__ == "__main__":
