@@ -164,6 +164,14 @@ class DailyRewardTest(unittest.TestCase):
         self.assertEqual(history, [])
         self.assertEqual(len(posts), 1)
         self.assertIn("ouverture échouée", posts[0])
+        self.assertIn("raison inconnue", posts[0])
+        self.assertNotIn("vérifie le token", posts[0])
+
+    def test_unknown_api_error_is_shown_verbatim(self):
+        _, posts, _ = self.run_main(claim=claim_reply(
+            status="error", error_message="user_level.not_allowed"))
+        self.assertIn("user_level.not_allowed", posts[0])
+        self.assertNotIn("vérifie le token", posts[0])
 
     def test_already_claimed_says_so_instead_of_blaming_token(self):
         claim = claim_reply(status="error", error_message="user_level.reward.already_claim")
@@ -182,6 +190,8 @@ class DailyRewardTest(unittest.TestCase):
         self.assertEqual(len(posts), 1)
         self.assertIn("Alice", posts[0])
         self.assertIn("appel échoué", posts[0])
+        self.assertIn("réseau ou réponse inattendue", posts[0])
+        self.assertNotIn("vérifie le token", posts[0])
 
     def test_history_is_saved_after_each_account(self):
         accounts = [

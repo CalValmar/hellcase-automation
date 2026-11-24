@@ -66,14 +66,15 @@ def main():
             claim = session.post(CLAIM_URL, timeout=30,
                                  headers={"X-CSRF-Token": account["xsrf"]}).json()
             if claim.get("status") != "success" or not claim.get("open_id"):
-                if claim.get("error_message") == "user_level.reward.already_claim":
+                reason = claim.get("error_message") or "raison inconnue"
+                if reason == "user_level.reward.already_claim":
                     notify(webhook, f"{label}: caisse déjà réclamée aujourd'hui")
                 else:
-                    notify(webhook, f"{label}: ouverture échouée — vérifie le token")
+                    notify(webhook, f"{label}: ouverture échouée — {reason}")
                 continue
             state = session.get(STATE_URL, timeout=30).json()
         except (requests.RequestException, ValueError):
-            notify(webhook, f"{label}: appel échoué — vérifie le token")
+            notify(webhook, f"{label}: appel échoué — réseau ou réponse inattendue")
             continue
 
         drop = extract_drop(state) if state.get("status") == "success" and state.get("bought") else None
