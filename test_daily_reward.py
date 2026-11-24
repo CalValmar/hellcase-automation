@@ -23,12 +23,13 @@ def case_info(nickname):
     }
 
 
-def claim_reply(status="success"):
+def claim_reply(status="success", error_message=None):
     return {
         "name": "newbie",
         "open_id": 123,
         "url": "https://hellcase.com/open/newbie",
         "status": status,
+        "error_message": error_message,
     }
 
 
@@ -163,6 +164,13 @@ class DailyRewardTest(unittest.TestCase):
         self.assertEqual(history, [])
         self.assertEqual(len(posts), 1)
         self.assertIn("ouverture échouée", posts[0])
+
+    def test_already_claimed_says_so_instead_of_blaming_token(self):
+        claim = claim_reply(status="error", error_message="user_level.reward.already_claim")
+        history, posts, _ = self.run_main(claim=claim)
+        self.assertEqual(history, [])
+        self.assertIn("déjà réclamée aujourd'hui", posts[0])
+        self.assertNotIn("vérifie le token", posts[0])
 
     def test_state_without_weapon_is_not_recorded(self):
         history, posts, _ = self.run_main(state=state_reply(bought=False, weapons=[]))

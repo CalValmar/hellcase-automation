@@ -52,7 +52,7 @@ The script prints nothing. For each account it claims the daily free case, reads
 Valmar: MP7 | Forest DDPAT — 0.03 $ (Forest DDPAT, consumer, Field-Tested)
 ```
 
-A failed claim or a response without a drop is reported on Discord and is not recorded, so the history stays truthful. Raw API responses are never logged: they contain account tokens.
+A failed claim or a response without a drop is reported on Discord and is not recorded, so the history stays truthful. If the daily case was already taken from the browser, Hellcase answers `user_level.reward.already_claim` and the message says the case was already claimed today rather than blaming the token. Raw API responses are never logged: they contain account tokens.
 
 A lock file (`daily-reward.lock`) makes a second run exit immediately if one is already running. A failed run is not retried automatically: a blind retry could open the same case twice. Run `python3 -m unittest -v test_daily_reward` for offline tests, and `python3 stats.py` to print the number of opens and the total price per account (no API call).
 
