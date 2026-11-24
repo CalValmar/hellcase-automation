@@ -7,26 +7,7 @@ Unofficial script that opens the Hellcase Newbie case for several accounts, reco
 - Get `XSRF-TOKEN` and `hellcase_session` from browser cookies on hellcase.com; edit `config.json` when they expire (~30 days).
 
 ## On the server
-Run these on the server itself. Paths assume `~/Documents/PERSO/Projets/hellcase-automation`; edit the two unit paths if yours differs.
-
-```bash
-cd ~/Documents/PERSO/Projets/hellcase-automation
-git pull --ff-only
-python3 -m pip install --user requests
-[ -f config.json ] || cp config.example.json config.json   # then fill tokens/webhook
-touch history.json state.json
-chmod 600 config.json history.json state.json
-mkdir -p ~/.config/systemd/user
-cp systemd/daily-reward.* ~/.config/systemd/user/
-sudo loginctl enable-linger "$USER"
-systemctl --user stop daily-reward.timer 2>/dev/null || true
-systemctl --user clean --what=state daily-reward.timer 2>/dev/null || true
-systemctl --user daemon-reload
-systemctl --user enable --now daily-reward.timer
-systemctl --user list-timers daily-reward.timer
-```
-
-`enable-linger` needs your sudo password and is required to keep the timer running after logout. The `stop`/`clean` lines avoid a stale catch-up claim on upgrade. After editing `config.json`, rerun the `chmod` line. A manual `python3 daily_reward.py` really claims cases; tests are offline: `python3 -m unittest -v test_daily_reward`.
+Clone at `~/Documents/PERSO/Projets/hellcase-automation` (or edit the two paths in the systemd units), then run `./setup.sh` (or `bash setup.sh`). On first run it creates `config.json` and stops so you can fill it; rerun it to finish. It pulls the code, installs `requests`, runs the offline tests, creates `history.json`/`state.json` in `600`, installs the units, asks your sudo password for `enable-linger`, and starts the timer. Rerun after any config change or upgrade. `enable-linger` is required for the timer to survive logout; the `stop`/`clean` steps avoid a stale catch-up claim. A manual `python3 daily_reward.py` really claims cases.
 
 ## Behavior
 - Hourly UTC timer with a random 0–30 min delay. Each run picks up to 2 due accounts, shuffled, 30–180 s apart.
