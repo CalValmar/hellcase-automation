@@ -1,3 +1,4 @@
+# Legacy repo-root files from before the home-dir migration.
 config.json
 .captures/
 history.json*

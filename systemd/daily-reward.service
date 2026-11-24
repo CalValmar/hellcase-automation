@@ -5,7 +5,6 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-WorkingDirectory=%h/Documents/PERSO/Projets/hellcase-automation
 ExecStart=/usr/bin/python3 %h/Documents/PERSO/Projets/hellcase-automation/daily_reward.py
 TimeoutStartSec=20min
 SyslogIdentifier=hellcase-daily
