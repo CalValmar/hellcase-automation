@@ -8,7 +8,17 @@ Unofficial script that opens the Hellcase Newbie case for several accounts, reco
 - Local files live outside the checkout: config in `~/.config/hellcase-automation/`, state/history/lock in `~/.local/state/hellcase-automation/`. Dirs are `700`, files `600`. Back up those two dirs, not the repo.
 
 ## On the server
-Clone at `~/Documents/PERSO/Projets/hellcase-automation` (or edit `systemd/daily-reward.service` before running setup). On a fresh clone, run `./setup.sh` (or `bash setup.sh`); from an old checkout, run `git pull` **first**, then `./setup.sh`, so the migration code is in the script you execute. It pulls the code, installs `requests`, stops the timer, migrates any legacy repo-root JSON without overwriting an existing destination, runs the offline tests, creates the local files in `600`, installs the units, asks your sudo password for `enable-linger`, and starts the timer. Rerun after any config change or upgrade. `enable-linger` is required for the timer to survive logout; the `stop`/`clean` steps avoid a stale catch-up claim. A manual `python3 daily_reward.py` really claims cases.
+Clone at `~/Documents/PERSO/Projets/hellcase-automation` (or edit `systemd/daily-reward.service` before running setup). From an old checkout, run `git pull` **first**, then `./setup.sh`, so the migration code is in the script you execute. On a fresh clone, just run `./setup.sh`.
+
+```bash
+git pull            # old checkout only; skip on a fresh clone
+./setup.sh          # creates config.json if missing, then stops
+# fill ~/.config/hellcase-automation/config.json
+./setup.sh
+systemctl --user list-timers daily-reward.timer
+```
+
+`setup.sh` installs `requests`, stops/cleans the timer, migrates legacy repo-root JSON without overwriting an existing destination, runs the offline tests, creates the private files, installs the units, asks your sudo password for `enable-linger`, and starts the timer. Rerun it after any config change or upgrade. `enable-linger` keeps the timer alive after logout; `stop`/`clean` avoid a stale catch-up claim. A manual `python3 daily_reward.py` really claims cases.
 
 ## Behavior
 - Hourly UTC timer with a random 0–30 min delay. Each run picks up to 2 due accounts, shuffled, 30–180 s apart.
