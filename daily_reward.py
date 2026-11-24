@@ -12,6 +12,10 @@ CLAIM_URL = "https://api.hellcase.com/user_level/claim_free_case/newbie"
 STATE_URL = "https://api.hellcase.com/open/newbie/state"
 COOLDOWN = 24 * 3600 + 60
 MAX_PER_RUN = 2
+CONFIG_PATH = os.path.expanduser("~/.config/hellcase-automation/config.json")
+STATE_PATH = os.path.expanduser("~/.local/state/hellcase-automation/state.json")
+HISTORY_PATH = os.path.expanduser("~/.local/state/hellcase-automation/history.json")
+LOCK_PATH = os.path.expanduser("~/.local/state/hellcase-automation/daily-reward.lock")
 
 
 def load_json(path, default):
@@ -36,7 +40,7 @@ def utc_day(timestamp):
 
 def load_state():
     try:
-        data = load_json("state.json", {})
+        data = load_json(STATE_PATH, {})
     except ValueError:
         return {}
     return data if isinstance(data, dict) else {}
@@ -44,7 +48,7 @@ def load_state():
 
 def load_history():
     try:
-        data = load_json("history.json", [])
+        data = load_json(HISTORY_PATH, [])
     except ValueError:
         return []
     return data if isinstance(data, list) else []
@@ -104,7 +108,7 @@ def due_accounts(accounts, state, now):
 
 
 def main():
-    config = load_json("config.json", {})
+    config = load_json(CONFIG_PATH, {})
     webhook = config.get("discord_webhook_url")
     accounts = config.get("accounts", [])
     history = load_history()
@@ -174,13 +178,13 @@ def main():
             continue
         finally:
             try:
-                save_json("state.json", state)
+                save_json(STATE_PATH, state)
             except OSError:
                 detail = f" (open_id {open_id})" if open_id else ""
                 notify(webhook, f"{label}: état local non écrit — disque ou permissions{detail}")
 
         try:
-            save_json("history.json", history)
+            save_json(HISTORY_PATH, history)
         except OSError:
             alert(webhook, state, key, day,
                   f"{label}: historique non écrit — disque ou permissions (open_id {open_id})")
@@ -194,7 +198,7 @@ def main():
 
 def run_locked():
     try:
-        with open("daily-reward.lock", "a") as lock:
+        with open(LOCK_PATH, "a") as lock:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
             main()
     except BlockingIOError:

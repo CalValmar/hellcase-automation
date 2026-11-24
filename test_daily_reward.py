@@ -120,7 +120,15 @@ class DailyRewardTest(unittest.TestCase):
 
     def run_main(self, nickname="Alice", username="", claim=None, state=None,
                  fail=None, accounts=None, sessions=None, history_seed=None,
-                 state_seed=None, sleep_calls=None):
+                 state_seed=None, sleep_calls=None, data_dir=None):
+        if data_dir is None:
+            data_dir = pathlib.Path(".")
+        paths = {
+            "config": str(data_dir / "config.json"),
+            "history": str(data_dir / "history.json"),
+            "state": str(data_dir / "state.json"),
+            "lock": str(data_dir / "daily-reward.lock"),
+        }
         if accounts is None:
             accounts = [{"username": username, "xsrf": "xsrf-token", "session": "s"}]
         if sessions is None:
@@ -136,11 +144,11 @@ class DailyRewardTest(unittest.TestCase):
         real_load = d.load_json
 
         def fake_load(path, default):
-            if path == "config.json":
+            if path == paths["config"]:
                 return {"discord_webhook_url": "https://example.invalid/hook", "accounts": accounts}
-            if path == "history.json":
+            if path == paths["history"]:
                 return history_seed if history_seed is not None else real_load(path, default)
-            if path == "state.json":
+            if path == paths["state"]:
                 return state_seed if state_seed is not None else real_load(path, default)
             return default
 
@@ -149,9 +157,13 @@ class DailyRewardTest(unittest.TestCase):
                                side_effect=lambda url, json=None, timeout=None: posts.append(json["content"])), \
              mock.patch.object(d.time, "sleep", side_effect=sleep_calls.append), \
              mock.patch.object(d.random, "shuffle", side_effect=lambda items: None), \
-             mock.patch.object(d, "load_json", side_effect=fake_load):
+             mock.patch.object(d, "load_json", side_effect=fake_load), \
+             mock.patch.object(d, "CONFIG_PATH", paths["config"], create=True), \
+             mock.patch.object(d, "HISTORY_PATH", paths["history"], create=True), \
+             mock.patch.object(d, "STATE_PATH", paths["state"], create=True), \
+             mock.patch.object(d, "LOCK_PATH", paths["lock"], create=True):
             d.main()
-        path = pathlib.Path("history.json")
+        path = pathlib.Path(paths["history"])
         history = json.loads(path.read_text()) if path.exists() else []
         return history, posts, session
 
@@ -354,12 +366,38 @@ class DailyRewardTest(unittest.TestCase):
         lock = open("daily-reward.lock", "a")
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         try:
-            with mock.patch.object(d, "main") as fake_main:
+            with mock.patch.object(d, "LOCK_PATH", "daily-reward.lock", create=True), \
+                 mock.patch.object(d, "main") as fake_main:
                 d.run_locked()
                 fake_main.assert_not_called()
         finally:
             fcntl.flock(lock, fcntl.LOCK_UN)
             lock.close()
+
+    def test_lock_uses_configured_path_outside_cwd(self):
+        data_dir = pathlib.Path(self.tmp.name) / "data"
+        data_dir.mkdir()
+        lock_path = data_dir / "daily-reward.lock"
+        lock = open(lock_path, "a")
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        try:
+            with mock.patch.object(d, "LOCK_PATH", str(lock_path), create=True), \
+                 mock.patch.object(d, "main") as fake_main:
+                d.run_locked()
+                fake_main.assert_not_called()
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            lock.close()
+
+    def test_config_state_and_history_use_configured_paths_outside_cwd(self):
+        data_dir = pathlib.Path(self.tmp.name) / "data"
+        data_dir.mkdir()
+        history, _, _ = self.run_main(data_dir=data_dir)
+        self.assertEqual(len(history), 1)
+        self.assertTrue((data_dir / "state.json").exists())
+        self.assertTrue((data_dir / "history.json").exists())
+        self.assertFalse(pathlib.Path("state.json").exists())
+        self.assertFalse(pathlib.Path("history.json").exists())
 
     def test_extract_drop_reads_state_weapon(self):
         drop = d.extract_drop(state_reply())
