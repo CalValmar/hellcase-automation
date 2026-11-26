@@ -51,3 +51,14 @@ class DeploymentTest(unittest.TestCase):
     def test_config_created_message_says_webhook_optional(self):
         setup = (ROOT / "setup.sh").read_text()
         self.assertIn("webhook is optional", setup)
+
+    def test_services_are_scoped_and_timer_is_shared(self):
+        self.assertTrue((ROOT / "systemd" / "user" / "daily-reward.service").is_file())
+        self.assertTrue((ROOT / "systemd" / "system" / "daily-reward.service").is_file())
+        self.assertTrue((ROOT / "systemd" / "daily-reward.timer").is_file())
+        self.assertFalse((ROOT / "systemd" / "system" / "daily-reward.timer").exists())
+
+    def test_setup_copies_shared_timer_for_both_modes(self):
+        setup = (ROOT / "setup.sh").read_text()
+        self.assertIn('cp "$UNIT_SRC/daily-reward.service" "$UNIT_DIR/"', setup)
+        self.assertIn('cp systemd/daily-reward.timer "$UNIT_DIR/"', setup)

@@ -67,7 +67,7 @@ else
   CONFIG_DIR="$HOME/.config/hellcase-automation"
   STATE_DIR="$HOME/.local/state/hellcase-automation"
   UNIT_DIR="$HOME/.config/systemd/user"
-  UNIT_SRC=systemd
+  UNIT_SRC=systemd/user
   PYTHON=/usr/bin/python3
 fi
 
@@ -186,7 +186,8 @@ ok
 
 step "Installing systemd timer"
 mkdir -p "$UNIT_DIR"
-cp "$UNIT_SRC/daily-reward.service" "$UNIT_SRC/daily-reward.timer" "$UNIT_DIR/"
+cp "$UNIT_SRC/daily-reward.service" "$UNIT_DIR/"
+cp systemd/daily-reward.timer "$UNIT_DIR/"
 svc_systemctl stop daily-reward.timer 2>/dev/null || true
 if [ "$MODE" = system ]; then
   systemctl daemon-reload

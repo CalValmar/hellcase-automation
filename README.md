@@ -10,11 +10,11 @@ hellcase-automation/
 ├── daily_reward.py
 ├── config.example.json
 ├── systemd/
-│   ├── daily-reward.service
-│   ├── daily-reward.timer
+│   ├── daily-reward.timer        # shared by both modes
+│   ├── user/
+│   │   └── daily-reward.service  # laptop
 │   └── system/
-│       ├── daily-reward.service
-│       └── daily-reward.timer
+│       └── daily-reward.service  # LXC
 └── tests/
 ```
 
