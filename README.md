@@ -38,7 +38,7 @@ hellcase-automation/
 - On a server/LXC, run `sudo ./setup.sh --system` from `/opt/hellcase-automation`; see below.
 
 ## On a Proxmox LXC (recommended)
-Create an unprivileged Debian 12 LXC with 1 core, 512 MB–1 GB RAM, 8 GB disk and a `vmbr0` network. Inside it:
+Create an unprivileged Debian 13 (Trixie) LXC with 1 core, 512 MB–1 GB RAM, 8 GB disk and a `vmbr0` network. Inside it:
 
 ```bash
 apt update && apt install -y git python3 python3-venv ca-certificates
