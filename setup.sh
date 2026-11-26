@@ -3,6 +3,11 @@ set -Eeuo pipefail
 
 cd "$(dirname "$0")"
 
+if [ "$#" -gt 1 ]; then
+  printf 'usage: %s [--system]\n' "$0" >&2
+  exit 2
+fi
+
 MODE=user
 case "${1:-}" in
   "") ;;
@@ -63,7 +68,7 @@ else
   STATE_DIR="$HOME/.local/state/hellcase-automation"
   UNIT_DIR="$HOME/.config/systemd/user"
   UNIT_SRC=systemd
-  PYTHON=python3
+  PYTHON=/usr/bin/python3
 fi
 
 CONFIG_PATH="$CONFIG_DIR/config.json"
@@ -75,19 +80,18 @@ if [ "$MODE" = system ]; then
     fail "system mode must be run from /opt/hellcase-automation"
     exit 1
   }
-  if [ -e "$SERVICE_HOME/.config/systemd/user/daily-reward.timer" ] || \
-     [ -e /root/.config/systemd/user/daily-reward.timer ]; then
-    fail "a daily-reward.timer user unit still exists; disable it before --system"
-    exit 1
-  fi
+  for home in /home/* /root /var/lib/hellcase; do
+    if [ -e "$home/.config/systemd/user/daily-reward.timer" ]; then
+      fail "a daily-reward.timer user unit still exists; disable it before --system"
+      exit 1
+    fi
+  done
 elif [ -e /etc/systemd/system/daily-reward.timer ]; then
   fail "a daily-reward.timer system unit exists; uninstall it before user setup"
   exit 1
 fi
 
-step "Stopping timer"
-svc_systemctl stop daily-reward.timer 2>/dev/null || true
-svc_systemctl clean --what=state daily-reward.timer 2>/dev/null || true
+step "Checking timer state"
 active_state=$(svc_systemctl show -p ActiveState --value daily-reward.service 2>/dev/null || true)
 if svc_systemctl is-active --quiet daily-reward.service || [ "$active_state" = "activating" ]; then
   fail "daily-reward.service is still running; retry when it finishes"
@@ -102,7 +106,7 @@ if [ "$MODE" = system ]; then
   "$PYTHON" -m pip install requests
 else
   git pull --ff-only
-  python3 -m pip install --user requests
+  "$PYTHON" -m pip install --user requests
 fi
 ok
 
@@ -145,9 +149,9 @@ if [ ! -f "$CONFIG_PATH" ]; then
   fi
   rerun="$0"
   if [ "$MODE" = system ]; then
-    rerun="sudo $0 --system"
+    rerun="$0 --system (as root)"
   fi
-  fail "config created at $CONFIG_PATH: fill discord_webhook_url and accounts, then rerun $rerun"
+  fail "config created at $CONFIG_PATH: fill accounts; webhook is optional, then rerun $rerun"
   exit 1
 fi
 chmod 600 "$CONFIG_PATH"
@@ -183,6 +187,7 @@ ok
 step "Installing systemd timer"
 mkdir -p "$UNIT_DIR"
 cp "$UNIT_SRC/daily-reward.service" "$UNIT_SRC/daily-reward.timer" "$UNIT_DIR/"
+svc_systemctl stop daily-reward.timer 2>/dev/null || true
 if [ "$MODE" = system ]; then
   systemctl daemon-reload
   systemctl enable --now daily-reward.timer

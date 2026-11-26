@@ -34,6 +34,16 @@ def save_json(path, data):
     os.replace(tmp, path)
 
 
+def get_json(session, url):
+    # Read-only GETs are retried once: network-online.target does not guarantee DNS here.
+    for attempt in range(2):
+        try:
+            return session.get(url, timeout=30).json()
+        except requests.RequestException:
+            if attempt:
+                raise
+
+
 def utc_day(timestamp):
     return datetime.fromtimestamp(timestamp, timezone.utc).strftime("%Y-%m-%d")
 
@@ -108,9 +118,13 @@ def due_accounts(accounts, state, now):
 
 
 def main():
-    config = load_json(CONFIG_PATH, {})
+    config = load_json(CONFIG_PATH, None)
+    if not isinstance(config, dict):
+        raise SystemExit("config.json introuvable ou invalide")
     webhook = config.get("discord_webhook_url")
-    accounts = config.get("accounts", [])
+    accounts = config.get("accounts")
+    if not isinstance(accounts, list) or not accounts:
+        raise SystemExit("config.json: 'accounts' doit contenir au moins un compte")
     history = load_history()
     state = load_state()
     now = time.time()
@@ -131,14 +145,9 @@ def main():
                 "XSRF-TOKEN": account["xsrf"],
                 "hellcase_session": account["session"],
             })
-            # Read-only GET is retried: network-online.target does not guarantee DNS here.
-            for attempt in range(2):
-                try:
-                    info = session.get(API_URL, timeout=30).json()
-                    break
-                except requests.RequestException:
-                    if attempt:
-                        raise
+            info = get_json(session, API_URL)
+            if not isinstance(info, dict):
+                raise ValueError("case info inattendu")
             label = account.get("username") or (info.get("user") or {}).get("nickname") or label
             claim = session.post(CLAIM_URL, timeout=30,
                                  headers={"X-CSRF-Token": account["xsrf"]}).json()
@@ -152,7 +161,7 @@ def main():
                 continue
             state[key]["last_claim"] = time.time()
             open_id = claim.get("open_id")
-            state_reply = session.get(STATE_URL, timeout=30).json()
+            state_reply = get_json(session, STATE_URL)
             drop = extract_drop(state_reply) if state_reply.get("status") == "success" and state_reply.get("bought") else None
 
             if not drop or not drop["weapon"]:

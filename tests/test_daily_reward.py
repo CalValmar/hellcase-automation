@@ -84,6 +84,7 @@ class FakeSession:
         self.fail = fail
         self.fail_once = fail_once
         self.get_calls = []
+        self.post_calls = []
         self.data = {
             d.API_URL: case_info(nickname),
             CLAIM_URL: claim or claim_reply(),
@@ -104,6 +105,7 @@ class FakeSession:
         assert timeout == 30
         if url == self.fail:
             raise d.requests.RequestException("down")
+        self.post_calls.append(url)
         self.headers = headers
         return mock.Mock(json=lambda: self.data[url])
 
@@ -361,6 +363,34 @@ class DailyRewardTest(unittest.TestCase):
         self.assertEqual(len(posts), 2)
         self.assertIn("appel échoué", posts[0])
         self.assertEqual(history[0]["account"], "Bob")
+
+    def test_non_dict_case_info_does_not_post_claim(self):
+        accounts = [{"username": "Alice", "xsrf": "x", "session": "s"}]
+        session = FakeSession("Alice")
+        session.data[d.API_URL] = []
+        history, posts, session = self.run_main(accounts=accounts, sessions=session)
+        self.assertEqual(session.post_calls.count(CLAIM_URL), 0)
+        self.assertEqual(history, [])
+        self.assertIn("appel échoué", posts[0])
+
+    def test_network_error_on_state_is_retried_once(self):
+        session = FakeSession(fail_once=STATE_URL)
+        history, posts, session = self.run_main(sessions=session)
+        self.assertEqual(len(history), 1)
+        self.assertEqual(session.get_calls.count(STATE_URL), 2)
+        self.assertFalse(any("appel échoué" in post for post in posts))
+
+    def test_missing_config_fails_loudly(self):
+        with mock.patch.object(d, "CONFIG_PATH", "missing-config.json", create=True):
+            with self.assertRaises(SystemExit):
+                d.main()
+
+    def test_invalid_accounts_container_fails_loudly(self):
+        path = pathlib.Path("config.json")
+        path.write_text(json.dumps({"discord_webhook_url": "", "accounts": None}))
+        with mock.patch.object(d, "CONFIG_PATH", str(path), create=True):
+            with self.assertRaises(SystemExit):
+                d.main()
 
     def test_lock_skips_second_run(self):
         lock = open("daily-reward.lock", "a")
