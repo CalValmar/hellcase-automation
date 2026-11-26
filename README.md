@@ -1,6 +1,32 @@
 # hellcase-automation
 Unofficial script that opens the Hellcase Newbie case for several accounts, records drops locally and alerts Discord. Automation may breach Hellcase's terms; this is not a ban guarantee.
 
+## Layout
+
+```text
+hellcase-automation/
+├── README.md
+├── setup.sh
+├── daily_reward.py
+├── config.example.json
+├── systemd/
+│   ├── daily-reward.service
+│   └── daily-reward.timer
+└── tests/
+```
+
+```text
+~/
+├── .config/hellcase-automation/
+│   └── config.json
+└── .local/state/hellcase-automation/
+    ├── state.json
+    ├── history.json
+    └── daily-reward.lock
+```
+
+Among the config/state files, only `config.example.json` is tracked; back up the two home directories, not the checkout.
+
 ## Setup
 - Python 3.6+, `requests` (`python3 -m pip install requests`).
 - On the first `./setup.sh`, `~/.config/hellcase-automation/config.json` is created from `config.example.json`. Fill `discord_webhook_url` (empty disables alerts) and `accounts` = `{username, xsrf, session}` objects, then rerun the script. `username` is a local label only; empty falls back to the API nickname. Keep account order stable: state keys by index.
