@@ -131,7 +131,7 @@ def main():
                 "XSRF-TOKEN": account["xsrf"],
                 "hellcase_session": account["session"],
             })
-            # Read-only GET is retried: a user timer has no network-online.target.
+            # Read-only GET is retried: network-online.target does not guarantee DNS here.
             for attempt in range(2):
                 try:
                     info = session.get(API_URL, timeout=30).json()

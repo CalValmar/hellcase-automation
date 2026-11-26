@@ -1,0 +1,12 @@
+[Unit]
+Description=Daily Hellcase Newbie case
+
+[Timer]
+OnCalendar=*-*-* *:00:00 UTC
+RandomizedDelaySec=30m
+Persistent=true
+AccuracySec=1s
+Unit=daily-reward.service
+
+[Install]
+WantedBy=timers.target

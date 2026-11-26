@@ -5,4 +5,5 @@ history.json*
 state.json*
 *.lock
 __pycache__/
+.venv/
 AGENTS.md

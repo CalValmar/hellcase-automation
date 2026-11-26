@@ -11,7 +11,10 @@ hellcase-automation/
 ├── config.example.json
 ├── systemd/
 │   ├── daily-reward.service
-│   └── daily-reward.timer
+│   ├── daily-reward.timer
+│   └── system/
+│       ├── daily-reward.service
+│       └── daily-reward.timer
 └── tests/
 ```
 
@@ -25,24 +28,30 @@ hellcase-automation/
     └── daily-reward.lock
 ```
 
-Among the config/state files, only `config.example.json` is tracked; back up the two home directories, not the checkout.
+`config.example.json` is the only tracked template; the config and state files shown here are generated locally. Back up the home directories, not the checkout.
 
 ## Setup
 - Python 3.6+, `requests` (`python3 -m pip install requests`).
 - On the first `./setup.sh`, `~/.config/hellcase-automation/config.json` is created from `config.example.json`. Fill `discord_webhook_url` (empty disables alerts) and `accounts` = `{username, xsrf, session}` objects, then rerun the script. `username` is a local label only; empty falls back to the API nickname.
 - Get `XSRF-TOKEN` and `hellcase_session` from browser cookies on hellcase.com; edit the config when they expire (~30 days).
 - Local files live outside the checkout: config in `~/.config/hellcase-automation/`, state/history/lock in `~/.local/state/hellcase-automation/`
+- On a server/LXC, run `sudo ./setup.sh --system` from `/opt/hellcase-automation`; see below.
 
-## On a server
-On a fresh clone, just run :
+## On a Proxmox LXC (recommended)
+Create an unprivileged Debian 12 LXC with 1 core, 512 MB–1 GB RAM, 8 GB disk and a `vmbr0` network. Inside it:
 
 ```bash
-git pull
-./setup.sh
-# fill ~/.config/hellcase-automation/config.json
-./setup.sh
-systemctl --user list-timers daily-reward.timer
+apt update && apt install -y git python3 python3-venv ca-certificates
+git clone <your-repo-url> /opt/hellcase-automation
+cd /opt/hellcase-automation
+sudo ./setup.sh --system
+# fill /var/lib/hellcase/.config/hellcase-automation/config.json
+sudo ./setup.sh --system
+systemctl list-timers daily-reward.timer --no-pager
+journalctl -u daily-reward.service -S today --no-pager
 ```
+
+The system unit runs as `hellcase` with `HOME=/var/lib/hellcase`, so config/state/lock live under that home, not `/root`. If you edit the config as root, rerun the installer afterwards to restore `hellcase` ownership. System mode never runs `git pull`: update with `git -C /opt/hellcase-automation pull` before rerunning the installer. Keep the accounts array in the same order: `state.json` is keyed by index. Back up the container with encrypted `vzdump`/PBS — the config contains live cookies and a Discord webhook. Do not run `python3 daily_reward.py` or `systemctl start daily-reward.service` as a test: a due account really claims its case.
 
 ## Behavior
 - Hourly UTC timer with a random 0–30 min delay. Each run picks up to 2 due accounts, shuffled, 30–180 s apart.

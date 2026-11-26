@@ -1,0 +1,12 @@
+[Unit]
+Description=Open Hellcase Newbie case
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=hellcase
+Environment=HOME=/var/lib/hellcase
+ExecStart=/opt/hellcase-automation/.venv/bin/python /opt/hellcase-automation/daily_reward.py
+TimeoutStartSec=20min
+SyslogIdentifier=hellcase-daily

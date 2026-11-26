@@ -3,11 +3,17 @@ set -Eeuo pipefail
 
 cd "$(dirname "$0")"
 
-CONFIG_DIR="$HOME/.config/hellcase-automation"
-STATE_DIR="$HOME/.local/state/hellcase-automation"
-CONFIG_PATH="$CONFIG_DIR/config.json"
-STATE_PATH="$STATE_DIR/state.json"
-HISTORY_PATH="$STATE_DIR/history.json"
+MODE=user
+case "${1:-}" in
+  "") ;;
+  --system) MODE=system ;;
+  *) printf 'usage: %s [--system]\n' "$0" >&2; exit 2 ;;
+esac
+
+if [ "$MODE" = system ] && [ "$(id -u)" -ne 0 ]; then
+  printf '%s✘ --system must be run as root%s\n' "${RED:-}" "${RESET:-}" >&2
+  exit 1
+fi
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   BLUE=$'\033[1;34m'
@@ -34,24 +40,82 @@ fail() {
 
 trap 'status=$?; fail "setup failed at line $LINENO (exit $status)"; exit "$status"' ERR
 
+svc_systemctl() {
+  if [ "$MODE" = system ]; then
+    systemctl "$@"
+  else
+    systemctl --user "$@"
+  fi
+}
+
+if [ "$MODE" = system ]; then
+  SERVICE_USER=hellcase
+  SERVICE_HOME=/var/lib/hellcase
+  CONFIG_DIR="$SERVICE_HOME/.config/hellcase-automation"
+  STATE_DIR="$SERVICE_HOME/.local/state/hellcase-automation"
+  UNIT_DIR=/etc/systemd/system
+  UNIT_SRC=systemd/system
+  PYTHON="$PWD/.venv/bin/python"
+else
+  SERVICE_USER="$(id -un)"
+  SERVICE_HOME="$HOME"
+  CONFIG_DIR="$HOME/.config/hellcase-automation"
+  STATE_DIR="$HOME/.local/state/hellcase-automation"
+  UNIT_DIR="$HOME/.config/systemd/user"
+  UNIT_SRC=systemd
+  PYTHON=python3
+fi
+
+CONFIG_PATH="$CONFIG_DIR/config.json"
+STATE_PATH="$STATE_DIR/state.json"
+HISTORY_PATH="$STATE_DIR/history.json"
+
+if [ "$MODE" = system ]; then
+  [ "$PWD" = /opt/hellcase-automation ] || {
+    fail "system mode must be run from /opt/hellcase-automation"
+    exit 1
+  }
+  if [ -e "$SERVICE_HOME/.config/systemd/user/daily-reward.timer" ] || \
+     [ -e /root/.config/systemd/user/daily-reward.timer ]; then
+    fail "a daily-reward.timer user unit still exists; disable it before --system"
+    exit 1
+  fi
+elif [ -e /etc/systemd/system/daily-reward.timer ]; then
+  fail "a daily-reward.timer system unit exists; uninstall it before user setup"
+  exit 1
+fi
+
 step "Stopping timer"
-systemctl --user stop daily-reward.timer 2>/dev/null || true
-systemctl --user clean --what=state daily-reward.timer 2>/dev/null || true
-active_state=$(systemctl --user show -p ActiveState --value daily-reward.service 2>/dev/null || true)
-if systemctl --user is-active --quiet daily-reward.service || [ "$active_state" = "activating" ]; then
+svc_systemctl stop daily-reward.timer 2>/dev/null || true
+svc_systemctl clean --what=state daily-reward.timer 2>/dev/null || true
+active_state=$(svc_systemctl show -p ActiveState --value daily-reward.service 2>/dev/null || true)
+if svc_systemctl is-active --quiet daily-reward.service || [ "$active_state" = "activating" ]; then
   fail "daily-reward.service is still running; retry when it finishes"
   exit 1
 fi
 ok
 
 step "Updating code and dependencies"
-git pull --ff-only
-python3 -m pip install --user requests
+if [ "$MODE" = system ]; then
+  # shortcut: system mode never runs git pull; update /opt/hellcase-automation explicitly first.
+  python3 -m venv .venv
+  "$PYTHON" -m pip install requests
+else
+  git pull --ff-only
+  python3 -m pip install --user requests
+fi
 ok
 
 step "Preparing directories and migrating legacy files"
-mkdir -p "$CONFIG_DIR" "$STATE_DIR"
-chmod 700 "$CONFIG_DIR" "$STATE_DIR"
+if [ "$MODE" = system ]; then
+  if ! id -u "$SERVICE_USER" >/dev/null 2>&1; then
+    useradd --system --home-dir "$SERVICE_HOME" --shell /usr/sbin/nologin "$SERVICE_USER"
+  fi
+  install -d -m 700 -o "$SERVICE_USER" -g "$SERVICE_USER" "$CONFIG_DIR" "$STATE_DIR"
+else
+  mkdir -p "$CONFIG_DIR" "$STATE_DIR"
+  chmod 700 "$CONFIG_DIR" "$STATE_DIR"
+fi
 
 migrate() {
   local src=$1 dst=$2
@@ -62,6 +126,9 @@ migrate() {
   fi
   mv "$src" "$dst"
   chmod 600 "$dst"
+  if [ "$MODE" = system ]; then
+    chown "$SERVICE_USER:$SERVICE_USER" "$dst"
+  fi
 }
 
 migrate config.json "$CONFIG_PATH"
@@ -73,14 +140,24 @@ step "Checking config"
 if [ ! -f "$CONFIG_PATH" ]; then
   cp config.example.json "$CONFIG_PATH"
   chmod 600 "$CONFIG_PATH"
-  fail "config created at $CONFIG_PATH: fill discord_webhook_url and accounts, then rerun ./setup.sh"
+  if [ "$MODE" = system ]; then
+    chown "$SERVICE_USER:$SERVICE_USER" "$CONFIG_PATH"
+  fi
+  rerun="$0"
+  if [ "$MODE" = system ]; then
+    rerun="sudo $0 --system"
+  fi
+  fail "config created at $CONFIG_PATH: fill discord_webhook_url and accounts, then rerun $rerun"
   exit 1
 fi
 chmod 600 "$CONFIG_PATH"
+if [ "$MODE" = system ]; then
+  chown "$SERVICE_USER:$SERVICE_USER" "$CONFIG_PATH"
+fi
 ok
 
 step "Validating config"
-python3 - "$CONFIG_PATH" <<'PY'
+HOME="$SERVICE_HOME" "$PYTHON" - "$CONFIG_PATH" <<'PY'
 import json
 import sys
 
@@ -92,21 +169,30 @@ PY
 ok
 
 step "Running tests"
-python3 -m unittest discover -s tests -t . -q
+HOME="$SERVICE_HOME" "$PYTHON" -m unittest discover -s tests -t . -q
 ok
 
 step "Initialising state files"
 touch "$HISTORY_PATH" "$STATE_PATH"
 chmod 600 "$HISTORY_PATH" "$STATE_PATH"
+if [ "$MODE" = system ]; then
+  chown "$SERVICE_USER:$SERVICE_USER" "$HISTORY_PATH" "$STATE_PATH"
+fi
 ok
 
 step "Installing systemd timer"
-mkdir -p ~/.config/systemd/user
-cp systemd/daily-reward.service systemd/daily-reward.timer ~/.config/systemd/user/
-sudo loginctl enable-linger "$(id -un)"
-systemctl --user daemon-reload
-systemctl --user enable --now daily-reward.timer
-systemctl --user list-timers daily-reward.timer --no-pager
+mkdir -p "$UNIT_DIR"
+cp "$UNIT_SRC/daily-reward.service" "$UNIT_SRC/daily-reward.timer" "$UNIT_DIR/"
+if [ "$MODE" = system ]; then
+  systemctl daemon-reload
+  systemctl enable --now daily-reward.timer
+  systemctl list-timers daily-reward.timer --no-pager
+else
+  sudo loginctl enable-linger "$(id -un)"
+  systemctl --user daemon-reload
+  systemctl --user enable --now daily-reward.timer
+  systemctl --user list-timers daily-reward.timer --no-pager
+fi
 ok
 
 printf '%s✔ setup complete%s\n' "$GREEN" "$RESET"
