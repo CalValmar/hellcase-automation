@@ -1,11 +1,14 @@
+import contextlib
 import fcntl
+import io
 import json
 import os
 import pathlib
+import re
 import stat
 import tempfile
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest import mock
 
 import daily_reward as d
@@ -122,7 +125,7 @@ class DailyRewardTest(unittest.TestCase):
 
     def run_main(self, nickname="Alice", username="", claim=None, state=None,
                  fail=None, accounts=None, sessions=None, history_seed=None,
-                 state_seed=None, sleep_calls=None, data_dir=None):
+                 state_seed=None, sleep_calls=None, data_dir=None, save_json=None):
         if data_dir is None:
             data_dir = pathlib.Path(".")
         paths = {
@@ -144,6 +147,7 @@ class DailyRewardTest(unittest.TestCase):
         posts = []
         sleep_calls = [] if sleep_calls is None else sleep_calls
         real_load = d.load_json
+        real_save = d.save_json
 
         def fake_load(path, default):
             if path == paths["config"]:
@@ -154,17 +158,23 @@ class DailyRewardTest(unittest.TestCase):
                 return state_seed if state_seed is not None else real_load(path, default)
             return default
 
+        output = io.StringIO()
         with session_patch, \
              mock.patch.object(d.requests, "post",
                                side_effect=lambda url, json=None, timeout=None: posts.append(json["content"])), \
              mock.patch.object(d.time, "sleep", side_effect=sleep_calls.append), \
              mock.patch.object(d.random, "shuffle", side_effect=lambda items: None), \
              mock.patch.object(d, "load_json", side_effect=fake_load), \
+             mock.patch.object(d, "save_json",
+                               side_effect=save_json if save_json is not None else real_save,
+                               create=True), \
              mock.patch.object(d, "CONFIG_PATH", paths["config"], create=True), \
              mock.patch.object(d, "HISTORY_PATH", paths["history"], create=True), \
              mock.patch.object(d, "STATE_PATH", paths["state"], create=True), \
-             mock.patch.object(d, "LOCK_PATH", paths["lock"], create=True):
+             mock.patch.object(d, "LOCK_PATH", paths["lock"], create=True), \
+             contextlib.redirect_stdout(output):
             d.main()
+        self.console = output.getvalue().splitlines()
         path = pathlib.Path(paths["history"])
         history = json.loads(path.read_text()) if path.exists() else []
         return history, posts, session
@@ -479,14 +489,29 @@ class DailyRewardTest(unittest.TestCase):
         self.assertEqual(len(history), 2)
         self.assertEqual(len(posts), 2)
         self.assertEqual(len(sleep_calls), 1)
-        self.assertGreaterEqual(sleep_calls[0], 30)
-        self.assertLessEqual(sleep_calls[0], 180)
+        self.assertEqual(sleep_calls[0], 300)
 
     def test_empty_history_file_is_ignored(self):
         pathlib.Path("history.json").write_text("")
         self.run_main()
         history = json.loads(pathlib.Path("history.json").read_text())
         self.assertEqual(len(history), 1)
+
+    def test_corrupt_history_is_renamed_and_not_overwritten(self):
+        pathlib.Path("history.json").write_text("{broken")
+        self.run_main()
+        self.assertEqual(pathlib.Path("history.json.corrupt").read_text(), "{broken")
+        history = json.loads(pathlib.Path("history.json").read_text())
+        self.assertEqual(len(history), 1)
+
+    def test_corrupt_history_alert_marker_is_persisted_without_due_accounts(self):
+        pathlib.Path("history.json").write_text("{broken")
+        accounts = [{"username": "Alice", "xsrf": "xsrf-token", "session": "s"}]
+        state_seed = {"1": {"last_claim": d.time.time() - 3600}}
+        self.run_main(accounts=accounts, state_seed=state_seed)
+        state = json.loads(pathlib.Path("state.json").read_text())
+        self.assertEqual(state["_history"]["last_error_day"],
+                         datetime.now(timezone.utc).strftime("%Y-%m-%d"))
 
     def test_empty_state_file_is_ignored(self):
         pathlib.Path("state.json").write_text("")
@@ -504,6 +529,13 @@ class DailyRewardTest(unittest.TestCase):
         state = {"1": {"last_attempt_day": today}}
         accounts = [{"username": "Alice", "xsrf": "x", "session": "s"}]
         self.assertEqual(d.due_accounts(accounts, state, d.time.time()), [])
+
+    def test_network_error_before_claim_does_not_consume_the_day(self):
+        accounts = [{"username": "Alice", "xsrf": "xsrf-token", "session": "s"}]
+        self.run_main(accounts=accounts, fail=d.API_URL)
+        state = json.loads(pathlib.Path("state.json").read_text())
+        self.assertEqual(d.due_accounts(accounts, state, d.time.time()),
+                         [(1, accounts[0], "1")])
 
     def test_failure_alert_is_deduplicated_per_utc_day(self):
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -528,6 +560,312 @@ class DailyRewardTest(unittest.TestCase):
             self.run_main()
         state = json.loads(pathlib.Path("state.json").read_text())
         self.assertEqual(state["1"]["last_claim"], start + 190)
+
+    def test_console_line_carries_timestamp_user_and_event(self):
+        clock = mock.Mock()
+        clock.now.return_value = datetime(2026, 11, 27, 9, 14, 2)
+        output = io.StringIO()
+        with mock.patch.object(d, "datetime", clock), contextlib.redirect_stdout(output):
+            d.log("Alice: drop — MP7 | Forest DDPAT, 0.03 $")
+        self.assertEqual(
+            output.getvalue(),
+            "[2026-11-27 09:14:02] Alice: drop — MP7 | Forest DDPAT, 0.03 $\n",
+        )
+
+    def test_console_shows_each_api_step_and_the_drop(self):
+        _, posts, _ = self.run_main(username="Valmar")
+        self.assertTrue(all(re.match(r"^\[\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\] ", line)
+                            for line in self.console))
+        for expected in ("Valmar: GET /open/newbie",
+                         "Valmar: POST claim",
+                         "Valmar: ouverture OK (open_id 123)",
+                         "Valmar: GET /open/newbie/state",
+                         "Valmar: MP7 | Forest DDPAT — 0.03 $"):
+            self.assertTrue(any(expected in line for line in self.console), expected)
+        self.assertEqual(len(posts), 1)
+
+    def test_console_shows_failure_even_when_discord_alert_is_suppressed(self):
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        _, posts, _ = self.run_main(fail=d.API_URL,
+                                    state_seed={"1": {"last_error_day": today}})
+        self.assertEqual(posts, [])
+        self.assertTrue(any("compte #1: appel échoué" in line
+                            for line in self.console))
+
+    def test_console_says_when_no_account_is_due(self):
+        self.run_main(state_seed={"1": {"last_claim": d.time.time() - 3600}})
+        self.assertTrue(any("aucun compte à traiter" in line
+                            for line in self.console))
+
+    def test_cookie_contract_is_sent_on_the_session(self):
+        _, _, session = self.run_main(username="Valmar")
+        session.cookies.update.assert_called_once_with({
+            "XSRF-TOKEN": "xsrf-token",
+            "hellcase_session": "s",
+        })
+
+    def test_claim_without_open_id_is_an_alert(self):
+        claim = claim_reply()
+        del claim["open_id"]
+        history, posts, _ = self.run_main(claim=claim)
+        self.assertEqual(history, [])
+        self.assertIn("ouverture échouée", posts[0])
+        self.assertIn("raison inconnue", posts[0])
+
+    def test_state_with_bought_false_has_no_drop(self):
+        history, posts, _ = self.run_main(state=state_reply(bought=False))
+        self.assertEqual(history, [])
+        self.assertIn("gain non renseigné par l'API", posts[0])
+
+    def test_weapon_without_name_has_no_drop(self):
+        history, posts, _ = self.run_main(state=state_reply(weapons=[{}]))
+        self.assertEqual(history, [])
+        self.assertIn("gain non renseigné par l'API", posts[0])
+
+    def test_non_dict_claim_response_does_not_crash(self):
+        session = FakeSession()
+        session.data[CLAIM_URL] = []
+        history, posts, _ = self.run_main(sessions=session)
+        self.assertEqual(history, [])
+        self.assertIn("appel échoué", posts[0])
+
+    def test_non_dict_state_response_keeps_open_id_in_alert(self):
+        session = FakeSession()
+        session.data[STATE_URL] = []
+        history, posts, _ = self.run_main(sessions=session)
+        self.assertEqual(history, [])
+        self.assertIn("appel échoué", posts[0])
+        self.assertIn("open_id 123", posts[0])
+
+    def test_unreadable_post_response_alerts_without_a_drop(self):
+        session = FakeSession()
+
+        def bad_post(url, **kwargs):
+            self.assertEqual(url, CLAIM_URL)
+            return mock.Mock(json=mock.Mock(side_effect=ValueError("bad json")))
+
+        session.post = bad_post
+        history, posts, _ = self.run_main(sessions=session)
+        state = json.loads(pathlib.Path("state.json").read_text())
+        self.assertEqual(history, [])
+        self.assertIn("appel échoué", posts[0])
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        self.assertEqual(state["1"]["last_attempt_day"], today)
+
+    def test_get_json_retries_invalid_json(self):
+        session = FakeSession()
+        real_get = session.get
+        calls = []
+
+        def flaky_get(url, timeout=None):
+            calls.append(url)
+            if url == d.API_URL and calls.count(d.API_URL) == 1:
+                return mock.Mock(json=mock.Mock(side_effect=ValueError("bad json")))
+            return real_get(url, timeout=timeout)
+
+        session.get = flaky_get
+        history, posts, _ = self.run_main(sessions=session)
+        self.assertEqual(calls.count(d.API_URL), 2)
+        self.assertEqual(len(history), 1)
+        self.assertFalse(any("appel échoué" in post for post in posts))
+
+    def test_get_json_alerts_after_two_invalid_json_responses(self):
+        session = FakeSession()
+        real_get = session.get
+        calls = []
+
+        def bad_get(url, timeout=None):
+            calls.append(url)
+            if url == d.API_URL:
+                return mock.Mock(json=mock.Mock(side_effect=ValueError("bad json")))
+            return real_get(url, timeout=timeout)
+
+        session.get = bad_get
+        history, posts, _ = self.run_main(sessions=session)
+        self.assertEqual(calls.count(d.API_URL), 2)
+        self.assertEqual(history, [])
+        self.assertIn("appel échoué", posts[0])
+
+    def test_yesterday_attempt_is_due(self):
+        yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+        with mock.patch.object(d, "datetime") as clock:
+            clock.fromtimestamp.return_value = datetime(2026, 11, 27, tzinfo=timezone.utc)
+            accounts = [{"username": "Alice", "xsrf": "x", "session": "s"}]
+            state = {"1": {"last_attempt_day": yesterday}}
+            self.assertEqual(d.due_accounts(accounts, state, 0),
+                             [(1, accounts[0], "1")])
+
+    def test_non_numeric_last_claim_is_ignored(self):
+        accounts = [{"username": "Alice", "xsrf": "x", "session": "s"}]
+        state = {"1": {"last_claim": "hier"}}
+        self.assertEqual(d.due_accounts(accounts, state, d.time.time()),
+                         [(1, accounts[0], "1")])
+
+    def test_cooldown_boundary_is_due(self):
+        now = d.time.time()
+        accounts = [{"username": "Alice", "xsrf": "x", "session": "s"}]
+        state = {"1": {"last_claim": now - d.COOLDOWN}}
+        self.assertEqual(d.due_accounts(accounts, state, now),
+                         [(1, accounts[0], "1")])
+
+    def test_alert_keeps_marker_when_webhook_is_deduplicated(self):
+        state = {}
+        with mock.patch.object(d, "notify") as notify, \
+             contextlib.redirect_stdout(io.StringIO()):
+            d.alert("hook", state, "1", "2026-11-27", "panne")
+            d.alert("hook", state, "1", "2026-11-27", "panne")
+        self.assertEqual(state["1"]["last_error_day"], "2026-11-27")
+        notify.assert_called_once_with("hook", "panne")
+
+    def test_webhook_errors_are_ignored(self):
+        with mock.patch.object(d.requests, "post",
+                               side_effect=d.requests.RequestException("down")):
+            d.notify("https://example.invalid/hook", "message")
+
+    def test_two_failed_accounts_alert_separately(self):
+        accounts = [
+            {"username": "Alice", "xsrf": "x", "session": "s"},
+            {"username": "Bob", "xsrf": "x", "session": "s"},
+        ]
+        sessions = [FakeSession("Alice", fail=d.API_URL),
+                    FakeSession("Bob", fail=d.API_URL)]
+        _, posts, _ = self.run_main(accounts=accounts, sessions=sessions)
+        self.assertEqual(len(posts), 2)
+        self.assertIn("Alice", posts[0])
+        self.assertIn("Bob", posts[1])
+
+    def test_top_level_state_and_history_shapes_are_ignored(self):
+        pathlib.Path("state.json").write_text("[]")
+        pathlib.Path("history.json").write_text("{}")
+        with mock.patch.object(d, "STATE_PATH", "state.json", create=True), \
+             mock.patch.object(d, "HISTORY_PATH", "history.json", create=True):
+            self.assertEqual(d.load_state(), {})
+            self.assertEqual(d.load_history(), [])
+
+    def test_history_records_case_name_and_console_counts_accounts(self):
+        history, _, _ = self.run_main()
+        self.assertEqual(history[0]["case"], "Newbie")
+        self.assertTrue(any("exécution — 1 compte(s) à traiter" in line
+                            for line in self.console))
+
+    def test_state_write_failure_keeps_the_drop(self):
+        real_open = open
+
+        def failing_open(path, *args, **kwargs):
+            if path == "state.json.tmp":
+                raise OSError("disk full")
+            return real_open(path, *args, **kwargs)
+
+        with mock.patch("builtins.open", side_effect=failing_open):
+            history, posts, _ = self.run_main()
+        self.assertEqual(len(history), 1)
+        self.assertTrue(any("MP7 | Forest DDPAT" in post for post in posts))
+        self.assertTrue(any("état local non écrit" in line
+                            for line in self.console))
+
+    def test_history_is_written_before_state(self):
+        calls = []
+
+        def save(path, data):
+            calls.append(os.path.basename(path))
+            if path == "state.json":
+                raise RuntimeError("crash between writes")
+            with open(path, "w") as f:
+                json.dump(data, f)
+
+        with self.assertRaises(RuntimeError):
+            self.run_main(save_json=save)
+        self.assertEqual(calls[0], "history.json")
+        self.assertTrue(pathlib.Path("history.json").exists())
+        self.assertFalse(pathlib.Path("state.json").exists())
+
+    def test_invalid_config_json_exits_cleanly(self):
+        path = pathlib.Path("config.json")
+        path.write_text("{broken")
+        with mock.patch.object(d, "CONFIG_PATH", str(path), create=True):
+            with self.assertRaises(SystemExit) as caught:
+                d.main()
+        self.assertIn("invalide", str(caught.exception))
+
+    def test_malformed_account_is_not_retried_the_same_day(self):
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        accounts = [
+            {"username": "Broken"},
+            {"username": "Bob", "xsrf": "x", "session": "s"},
+        ]
+        sessions = [FakeSession("Broken"), FakeSession("Bob")]
+        _, posts, _ = self.run_main(accounts=accounts, sessions=sessions)
+        state = json.loads(pathlib.Path("state.json").read_text())
+        self.assertEqual(state["1"]["last_attempt_day"], today)
+        self.assertEqual(state["1"]["last_error_day"], today)
+        self.assertEqual(len(posts), 2)
+
+    def test_positive_lock_calls_main(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            lock = pathlib.Path(tmp) / "daily-reward.lock"
+            with mock.patch.object(d, "LOCK_PATH", str(lock), create=True), \
+                 mock.patch.object(d, "main") as fake_main:
+                d.run_locked()
+        fake_main.assert_called_once_with()
+
+    def test_failed_history_write_does_not_leak_row_into_next_account(self):
+        accounts = [
+            {"username": "Alice", "xsrf": "x", "session": "s"},
+            {"username": "Bob", "xsrf": "x", "session": "s"},
+        ]
+        sessions = [FakeSession("Alice"), FakeSession("Bob")]
+        real_open = open
+        failures = []
+
+        def flaky_open(path, *args, **kwargs):
+            if path == "history.json.tmp":
+                failures.append(path)
+                if len(failures) == 1:
+                    raise OSError("disk full")
+            return real_open(path, *args, **kwargs)
+
+        with mock.patch("builtins.open", side_effect=flaky_open):
+            history, posts, _ = self.run_main(accounts=accounts, sessions=sessions)
+        self.assertEqual(len(history), 1)
+        self.assertEqual(history[0]["account"], "Bob")
+        self.assertTrue(any("historique non écrit" in post and "Alice" in post
+                            for post in posts))
+
+    def test_non_dict_account_is_not_retried_the_same_day(self):
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        accounts = ["alice", {"username": "Bob", "xsrf": "x", "session": "s"}]
+        sessions = [FakeSession("alice"), FakeSession("Bob")]
+        _, posts, _ = self.run_main(accounts=accounts, sessions=sessions)
+        state = json.loads(pathlib.Path("state.json").read_text())
+        self.assertEqual(state["1"]["last_attempt_day"], today)
+        self.assertEqual(len(posts), 2)
+
+    def test_broken_api_user_shape_is_not_retried_the_same_day(self):
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        session = FakeSession()
+        session.data[d.API_URL] = {"user": "oops"}
+        _, posts, _ = self.run_main(sessions=session)
+        state = json.loads(pathlib.Path("state.json").read_text())
+        self.assertEqual(state["1"]["last_attempt_day"], today)
+        self.assertIn("appel échoué", posts[0])
+        self.assertEqual(session.post_calls.count(CLAIM_URL), 0)
+
+    def test_non_dict_special_state_record_does_not_abort(self):
+        pathlib.Path("history.json").write_text("{broken")
+        _, posts, _ = self.run_main(state_seed={"_history": 5})
+        state = json.loads(pathlib.Path("state.json").read_text())
+        self.assertEqual(pathlib.Path("history.json.corrupt").read_text(), "{broken")
+        self.assertIsInstance(state["_history"], dict)
+        self.assertIn("last_error_day", state["_history"])
+        self.assertTrue(posts)
+
+    def test_corrupt_history_backup_is_not_clobbered(self):
+        pathlib.Path("history.json").write_text("{first")
+        self.run_main(state_seed={})
+        pathlib.Path("history.json").write_text("{second")
+        self.run_main(state_seed={})
+        self.assertEqual(pathlib.Path("history.json.corrupt").read_text(), "{first")
+        self.assertEqual(len(json.loads(pathlib.Path("history.json").read_text())), 1)
 
 
 if __name__ == "__main__":

@@ -19,6 +19,10 @@ if [ "$MODE" = system ] && [ "$(id -u)" -ne 0 ]; then
   printf '%s✘ --system must be run as root%s\n' "${RED:-}" "${RESET:-}" >&2
   exit 1
 fi
+if [ "$MODE" = user ] && [ "$(id -u)" -eq 0 ]; then
+  printf '%s✘ user mode must not run as root; use --system%s\n' "${RED:-}" "${RESET:-}" >&2
+  exit 1
+fi
 
 if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
   BLUE=$'\033[1;34m'
@@ -81,13 +85,15 @@ if [ "$MODE" = system ]; then
     exit 1
   }
   for home in /home/* /root /var/lib/hellcase; do
-    if [ -e "$home/.config/systemd/user/daily-reward.timer" ]; then
-      fail "a daily-reward.timer user unit still exists; disable it before --system"
+    if [ -e "$home/.config/systemd/user/daily-reward.timer" ] || \
+       [ -e "$home/.config/systemd/user/daily-reward.service" ]; then
+      fail "a daily-reward user unit still exists; remove the user unit files before --system"
       exit 1
     fi
   done
-elif [ -e /etc/systemd/system/daily-reward.timer ]; then
-  fail "a daily-reward.timer system unit exists; uninstall it before user setup"
+elif [ -e /etc/systemd/system/daily-reward.timer ] || \
+     [ -e /etc/systemd/system/daily-reward.service ]; then
+  fail "a daily-reward system unit exists; remove the system unit files before user setup"
   exit 1
 fi
 
@@ -106,7 +112,12 @@ if [ "$MODE" = system ]; then
   "$PYTHON" -m pip install requests
 else
   git pull --ff-only
-  "$PYTHON" -m pip install --user requests
+  if ! "$PYTHON" -c "import requests" >/dev/null 2>&1; then
+    "$PYTHON" -m pip install --user requests || {
+      fail "requests unavailable: install python3-requests or use --system"
+      exit 1
+    }
+  fi
 fi
 ok
 
@@ -167,8 +178,14 @@ import sys
 
 with open(sys.argv[1]) as f:
     config = json.load(f)
-if not any(a.get("xsrf") and a.get("session") for a in config.get("accounts", [])):
+accounts = config.get("accounts", [])
+if not all(isinstance(a, dict) for a in accounts):
+    raise SystemExit("config.json: 'accounts' must contain objects")
+if not any(a.get("xsrf") and a.get("session") for a in accounts):
     raise SystemExit("config.json needs at least one account with xsrf and session")
+if any(str(a.get(k, "")).startswith("REPLACE_")
+       for a in accounts for k in ("xsrf", "session")):
+    raise SystemExit("config.json still contains REPLACE_ placeholders")
 PY
 ok
 
@@ -188,6 +205,9 @@ step "Installing systemd timer"
 mkdir -p "$UNIT_DIR"
 cp "$UNIT_SRC/daily-reward.service" "$UNIT_DIR/"
 cp systemd/daily-reward.timer "$UNIT_DIR/"
+if [ "$MODE" = user ]; then
+  sed -i "s|^ExecStart=.*|ExecStart=$PYTHON $PWD/daily_reward.py|" "$UNIT_DIR/daily-reward.service"
+fi
 svc_systemctl stop daily-reward.timer 2>/dev/null || true
 if [ "$MODE" = system ]; then
   systemctl daemon-reload
